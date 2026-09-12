@@ -1,0 +1,177 @@
+{
+  "worldId": "3FO4K4XNH9NX",
+  "platform": "Aholo",
+  "region": "cn",
+  "scene": "space",
+  "taskQuality": "low",
+  "useMask": false,
+  "createAttempts": 1,
+  "createdAt": "2026-09-12T07:11:44.000Z",
+  "uploadedCount": 35,
+  "excluded": [
+    "IMG_20260912_145658.jpg",
+    "IMG_20260912_145636.jpg",
+    "IMG_20260912_145653.jpg"
+  ],
+  "inputs": [
+    {
+      "file": "IMG_20260912_150354.jpg",
+      "md5": "8bce5e151b59752242d388527ac513e7"
+    },
+    {
+      "file": "IMG_20260912_150357.jpg",
+      "md5": "77557b806d6ea37ee8e6e95075b137e0"
+    },
+    {
+      "file": "IMG_20260912_150404.jpg",
+      "md5": "bd112b87c0cdcf449d3de6a208fbcad4"
+    },
+    {
+      "file": "IMG_20260912_150407.jpg",
+      "md5": "82c9080c62e8c50538cc8c3ed18b4d8c"
+    },
+    {
+      "file": "IMG_20260912_150410.jpg",
+      "md5": "5137f09217906b2927275ad287acfd03"
+    },
+    {
+      "file": "IMG_20260912_150411.jpg",
+      "md5": "faae218b5089a1603690ac1fb0d5d6ce"
+    },
+    {
+      "file": "IMG_20260912_150415.jpg",
+      "md5": "51625bfe92907f94f7d75f7e608ae486"
+    },
+    {
+      "file": "IMG_20260912_150418.jpg",
+      "md5": "1e77484ed0feffb7ddb81d4ae5e9968a"
+    },
+    {
+      "file": "IMG_20260912_150419.jpg",
+      "md5": "efbfef2fb53babc3b9977b2a8f20804d"
+    },
+    {
+      "file": "IMG_20260912_150420.jpg",
+      "md5": "7b5c4523e5bafe5afbff1a6c3a8288a6"
+    },
+    {
+      "file": "IMG_20260912_150421.jpg",
+      "md5": "a2ff31d86a4f813c8f5ff5b7f1847a71"
+    },
+    {
+      "file": "IMG_20260912_150422.jpg",
+      "md5": "cecdb8bc39c5c1a1ec6a3069ae64fab0"
+    },
+    {
+      "file": "IMG_20260912_150422_2.jpg",
+      "md5": "a5ca864eb378a859832babf4942dffa0"
+    },
+    {
+      "file": "IMG_20260912_150423.jpg",
+      "md5": "ac1e8475f05eeeaf832c6a0b5b046ed2"
+    },
+    {
+      "file": "IMG_20260912_150423_2.jpg",
+      "md5": "59d1c3b0262627ae244426a2216cf0d0"
+    },
+    {
+      "file": "IMG_20260912_150424.jpg",
+      "md5": "50c8c54d1891b81879fd30995d7b6a06"
+    },
+    {
+      "file": "IMG_20260912_150424_2.jpg",
+      "md5": "0f2b8aa299680069b51e7da9f279c625"
+    },
+    {
+      "file": "IMG_20260912_150425.jpg",
+      "md5": "b3ff0e2bf05d3365cdfec935f3188e67"
+    },
+    {
+      "file": "IMG_20260912_150425_2.jpg",
+      "md5": "5eb28cbea6697b399b25458fe74b942d"
+    },
+    {
+      "file": "IMG_20260912_150425_4.jpg",
+      "md5": "8850412e44636b3f0d0ec26e99692ecf"
+    },
+    {
+      "file": "IMG_20260912_150436.jpg",
+      "md5": "893611ac482e60a3d680306a039362eb"
+    },
+    {
+      "file": "IMG_20260912_150437_1.jpg",
+      "md5": "b0fd24121c4e614124a0f7f995c9dd17"
+    },
+    {
+      "file": "IMG_20260912_150437_2.jpg",
+      "md5": "2577d4a6dfc5a5ffb8a7e16022edd940"
+    },
+    {
+      "file": "IMG_20260912_150438_1.jpg",
+      "md5": "b72358182df04a408b4615888ee94209"
+    },
+    {
+      "file": "IMG_20260912_150439.jpg",
+      "md5": "75af6ccdab81bb3f22e7782a0f0bd799"
+    },
+    {
+      "file": "IMG_20260912_150440_1.jpg",
+      "md5": "4d0c502830b4eb322f3a33e521652b0f"
+    },
+    {
+      "file": "IMG_20260912_150441.jpg",
+      "md5": "602f7baf32ae78ff6392b117d9d7a296"
+    },
+    {
+      "file": "IMG_20260912_150441_2.jpg",
+      "md5": "e197e749f116c6250f0cd4e9570792c5"
+    },
+    {
+      "file": "IMG_20260912_150442_1.jpg",
+      "md5": "0b14a46254b351d501f37a9348218523"
+    },
+    {
+      "file": "IMG_20260912_150442_3.jpg",
+      "md5": "4830b452aa0dbedd6cb15ea6ca91da2e"
+    },
+    {
+      "file": "IMG_20260912_150442_4.jpg",
+      "md5": "18f69cc94bd6c3352b46e2a35d208389"
+    },
+    {
+      "file": "IMG_20260912_150442_6.jpg",
+      "md5": "bdaba902bc11fdd25eeee06a1592c135"
+    },
+    {
+      "file": "IMG_20260912_150442_8.jpg",
+      "md5": "ebcfd2dbd55a917e787a71bb487a58cb"
+    },
+    {
+      "file": "IMG_20260912_150443_1.jpg",
+      "md5": "cae7522823fdbad01cd3f69d059cba6a"
+    },
+    {
+      "file": "IMG_20260912_150443_3.jpg",
+      "md5": "4340cfe69a80e40bb5400f70e372c88b"
+    }
+  ],
+  "status": "SUCCEEDED",
+  "progress": 1,
+  "checkedAt": "2026-09-12T07:27:20.612Z",
+  "completedAt": "2026-09-12T07:15:44.000Z",
+  "elapsedSeconds": 240,
+  "upAxis": "Z",
+  "gaussianCount": 139787,
+  "artifacts": [
+    {
+      "path": "outputs/aholo/3FO4K4XNH9NX/workbench.ply",
+      "bytes": 32991209,
+      "sha256": "06D5CD03F4A396002E75C64264D67CB2D66452FD673765E5E2E15DB485509BAE"
+    },
+    {
+      "path": "outputs/aholo/3FO4K4XNH9NX/workbench.spz",
+      "bytes": 3334678,
+      "sha256": "990A5884DA0D8D4E337A6CC7F13C0063C393DBA39C41769E2243A1B1CAF581E0"
+    }
+  ]
+}

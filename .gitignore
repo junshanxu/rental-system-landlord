@@ -1,0 +1,11 @@
+# Local reconstruction exports and preview captures
+/outputs/
+
+# Application runtime, credentials and generated files
+/.data/
+/.env
+/node_modules/
+/dist/
+/test-results/
+/playwright-report/
+/.firecrawl/
