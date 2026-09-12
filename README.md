@@ -35,17 +35,17 @@ npm start
 | 草稿、原始素材、备注与复查记录持久化 | 已实现，服务重启恢复测试通过 |
 | 弹幕指导、拍后问题与补拍入口 | 本地基础检查已实现；视觉模型适配器已做本地 HTTP 桩测试 |
 | 重建提交、版本防重、状态与下载 | Aholo 适配器已实现；新付费任务仅做桩测试，未实际调用 |
-| 三维预览 | 已有工作台 SPZ 已实际加载；质量仍待验收 |
+| 三维预览 | 环绕/平移/漫游、WASD 与 QE 移动键、初始点、缩放、全屏；默认打开导入的现代办公会议室，可切换工作台样例，质量仍待验收 |
 
 ```powershell
 npm run check
 npm test
-npm run test:e2e -- --grep-invert "existing real SPZ sample"
+npm run test:e2e -- --grep-invert "@sample"
 ```
 
-新克隆的源码仓库不含历史模型，上述浏览器命令运行其余 9 项测试。完整 10 项测试还需本地已有 `outputs/aholo/3FO4K4XNH9NX/workbench.spz`，具备该文件时运行 `npm run test:e2e`。没有样例文件不影响登录、用户中心核验和自己的房屋采集。
+新克隆的源码仓库不含模型，上述浏览器命令运行其余 10 项测试。完整 13 项测试还需 `outputs/aholo/3FO4K4XNH9NX/workbench.spz` 及 `outputs/aholo/3FO4K4VCF7LG/meeting-room.spz`、`meeting-room.ply`，具备这些文件时运行 `npm run test:e2e`。没有样例文件不影响登录、用户中心核验和自己的房屋采集。会议室来源、下载地址和文件校验见 [导入记录](docs/experiments/2026-09-12-meeting-room/import.md)。
 
-2026-09-12：生产构建、15 项接口/适配器测试、10 项 Edge 浏览器测试通过。E2E 默认使用已安装的 Microsoft Edge 和测试摄像头，服务及数据与体验入口分离。真实手机、真实房间、真实视觉 Agent 与新重建效果未验收。
+2026-09-12：生产构建、20 项接口/适配器/导航用例、13 项 Edge 浏览器测试通过。导入补测包括样例切换、平台初始视角复位与下载。重启用例的旧 TCP 连接复用问题已在测试客户端修正，详见 [验证记录](docs/MVP验证记录-20260912.md)。E2E 使用已安装的 Microsoft Edge、测试摄像头和触屏模拟，服务及数据与体验入口分离。真实手机、真实房间、真实视觉 Agent 与新重建效果未验收。
 
 ## 文档
 

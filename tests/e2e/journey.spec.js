@@ -193,15 +193,156 @@ test('mobile layout is contained and capture remains usable', async ({ page }) =
   await page.screenshot({ path: 'test-results/screens/capture-mobile.png', fullPage: true });
 });
 
-test('existing real SPZ sample loads and remains separate from user captures', async ({ page }) => {
+test('existing real SPZ sample loads and remains separate from user captures @sample', async ({ page }) => {
   test.setTimeout(90_000);
   await login(page); await identity(page); await action(page, 'sample').first().click();
+  await page.locator('[data-action="select-sample"][data-id="3FO4K4XNH9NX"]').click();
   await expect(page.locator('#viewer-status')).toContainText('模型已加载', { timeout: 60_000 });
   await expect(page.locator('#model-viewer canvas')).toBeVisible();
   await expect(page.locator('.notice.warning')).toContainText('不是本次拍摄');
+  const viewer = page.locator('#model-viewer'), canvas = viewer.locator('canvas');
+  await expect(viewer.getByRole('button', { name:'前进 (W)', exact:true })).toBeEnabled();
+  await expect(viewer.getByRole('button', { name:'平移', exact:true })).toBeVisible();
+  await expect(viewer.getByRole('button', { name:'回到初始点', exact:true })).toBeEnabled();
+  await canvas.focus();
+  const initialImage = await canvas.screenshot();
+  await page.keyboard.down('w');
+  await expect.poll(async () => (await canvas.screenshot()).equals(initialImage)).toBe(false);
+  await page.keyboard.up('w');
+  await viewer.getByRole('button', { name:'漫游', exact:true }).click();
+  await expect(viewer.getByRole('button', { name:'漫游', exact:true })).toHaveAttribute('aria-pressed', 'true');
+  const forward = viewer.getByRole('button', { name:'前进 (W)', exact:true });
+  const box = await forward.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await page.mouse.down();
+  await expect(forward).toHaveClass(/is-pressed/);
+  await page.mouse.move(20, 20); await page.mouse.up();
+  await expect(viewer.locator('.is-pressed')).toHaveCount(0);
+  await viewer.getByRole('button', { name:'回到初始点', exact:true }).click();
+  await expect(page.locator('#viewer-status')).toContainText('已回到初始点');
+  await expect(viewer.getByRole('button', { name:'环绕', exact:true })).toHaveAttribute('aria-pressed', 'true');
+  await canvas.focus(); await page.keyboard.press('r');
+  await expect(viewer.getByRole('button', { name:'环绕', exact:true })).toHaveAttribute('aria-pressed', 'true');
+  await viewer.getByLabel('预设视角', { exact:true }).selectOption('top');
+  await expect(viewer.getByLabel('预设视角', { exact:true })).toHaveValue('top');
+  await action(page, 'reset-view').click();
+  await expect(viewer.getByLabel('预设视角', { exact:true })).toHaveValue('overall');
+  await viewer.getByRole('button', { name:'操作说明', exact:true }).click();
+  await expect(viewer.getByRole('region', { name:'三维操作说明' })).toBeVisible();
+  await page.keyboard.press('Escape'); await expect(viewer.locator('.viewer-help')).toBeHidden();
+  await viewer.getByRole('button', { name:'进入全屏 (F)', exact:true }).click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement?.id === 'model-viewer' || document.querySelector('#model-viewer').classList.contains('viewer-expanded'))).toBe(true);
+  await viewer.getByLabel('预设视角', { exact:true }).selectOption('side');
+  await viewer.getByRole('button', { name:'回到初始点', exact:true }).click();
+  await expect(viewer.getByLabel('预设视角', { exact:true })).toHaveValue('overall');
+  await page.screenshot({ path:'test-results/screens/viewer-fullscreen.png' });
+  await viewer.getByRole('button', { name:'退出全屏 (F)', exact:true }).click();
+  await expect.poll(() => page.evaluate(() => !!document.fullscreenElement || document.body.classList.contains('viewer-modal-open'))).toBe(false);
   await page.screenshot({ path: 'test-results/screens/sample-desktop.png', fullPage: true });
-  await action(page, 'reset-view').click(); await action(page, 'home').first().click();
+  await action(page, 'reset-view').click();
+  const graphics = await canvas.evaluateHandle(el => el.getContext('webgl2'));
+  await viewer.evaluate(el => { el.requestFullscreen = async () => { throw new DOMException('Test unsupported fullscreen', 'NotSupportedError'); }; });
+  await viewer.getByRole('button', { name:'进入全屏 (F)', exact:true }).click();
+  await expect(page.locator('body')).toHaveClass(/viewer-modal-open/);
+  await page.route('**/api/session', route => route.fulfill({ status:401, json:{ error:'测试登录已过期' } }), { times:1 });
+  // The expanded viewer covers the navigation; trigger the same action to simulate session expiry.
+  await action(page, 'home').first().evaluate(el => el.click());
+  await expect(page.locator('#login-form')).toBeVisible();
+  await expect(page.locator('body')).not.toHaveClass(/viewer-modal-open/);
+  await expect.poll(() => graphics.evaluate(gl => gl.isContextLost())).toBe(true);
+  await graphics.dispose();
   await expect(page.locator('#model-viewer canvas')).toHaveCount(0);
+});
+
+test('imported meeting room is the default, switches independently and returns to its initial point @sample', async ({ page }) => {
+  test.setTimeout(90_000);
+  await login(page);
+  const originalDrafts = await (await page.request.get('/api/drafts')).json();
+  const response = page.waitForResponse('**/api/samples/3FO4K4VCF7LG/model.spz');
+  await action(page, 'sample').first().click();
+  expect((await response).status()).toBe(200);
+  const meeting = page.locator('[data-action="select-sample"][data-id="3FO4K4VCF7LG"]');
+  await expect(meeting).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.sample-details')).toContainText('Modern Office Meeting Room');
+  await expect(page.locator('.sample-details')).not.toContainText('35 张照片');
+  await expect(page.getByRole('link', { name: /在平台查看/ })).toHaveAttribute('href', 'https://studio.aholo3d.com/viewer?projectId=3FO4K4VCF7LG');
+  const download = await page.request.head('/api/samples/3FO4K4VCF7LG/model.ply?download=1');
+  expect(download.status()).toBe(200);
+  expect(download.headers()['content-length']).toBe('85156177');
+  await expect(page.locator('#viewer-status')).toContainText('模型已加载', { timeout:60_000 });
+  const viewer = page.locator('#model-viewer');
+  await viewer.getByRole('button', { name:'漫游', exact:true }).click();
+  await viewer.getByLabel('预设视角', { exact:true }).selectOption('side');
+  await viewer.getByRole('button', { name:'回到初始点', exact:true }).click();
+  await expect(viewer.getByLabel('预设视角', { exact:true })).toHaveValue('overall');
+  await expect(page.locator('#viewer-status')).toContainText('已回到初始点');
+  await page.screenshot({ path:'test-results/screens/meeting-room-desktop.png', fullPage:true });
+  await viewer.getByRole('button', { name:'进入全屏 (F)', exact:true }).click();
+  await page.screenshot({ path:'test-results/screens/meeting-room-fullscreen.png' });
+  await viewer.getByRole('button', { name:'退出全屏 (F)', exact:true }).click();
+  const graphics = await viewer.locator('canvas').evaluateHandle(el => el.getContext('webgl2'));
+  await page.locator('[data-action="select-sample"][data-id="3FO4K4XNH9NX"]').click();
+  await expect.poll(() => graphics.evaluate(gl => gl.isContextLost())).toBe(true);
+  await graphics.dispose();
+  await expect(page.locator('.notice.warning')).toContainText('35 张已有照片');
+  await expect(page.locator('#viewer-status')).toContainText('模型已加载', { timeout:60_000 });
+  await meeting.click();
+  await expect(page.locator('#viewer-status')).toContainText('模型已加载', { timeout:60_000 });
+  await expect(page.locator('#model-viewer canvas')).toHaveCount(1);
+  const drafts = await (await page.request.get('/api/drafts')).json();
+  expect(drafts).toEqual(originalDrafts);
+  await action(page, 'new').click();
+  await expect(page.locator('.verification-heading')).toBeVisible();
+});
+
+test.describe('touch preview', () => {
+  test.use({ viewport:{ width:390, height:844 }, hasTouch:true, isMobile:true });
+  test('mobile viewer exposes touch movement, presets and full screen without horizontal overflow @sample', async ({ page }) => {
+    await login(page); await action(page, 'sample').first().click();
+    const viewer = page.locator('#model-viewer');
+    await expect(page.locator('#viewer-status')).toContainText('模型已加载', { timeout:60_000 });
+    const before = await viewer.locator('canvas').screenshot();
+    await viewer.getByRole('button', { name:'向右 (D)', exact:true }).tap();
+    await expect.poll(async () => (await viewer.locator('canvas').screenshot()).equals(before)).toBe(false);
+    await expect(viewer.locator('.is-pressed')).toHaveCount(0);
+    await expect(viewer.getByRole('button', { name:'升高 (E)', exact:true })).toBeVisible();
+    await viewer.getByRole('button', { name:'漫游', exact:true }).tap();
+    await viewer.getByRole('button', { name:'回到初始点', exact:true }).tap();
+    await expect(page.locator('#viewer-status')).toContainText('已回到初始点');
+    await expect(viewer.getByRole('button', { name:'环绕', exact:true })).toHaveAttribute('aria-pressed', 'true');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    expect(await viewer.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await page.screenshot({ path:'test-results/screens/viewer-mobile.png', fullPage:true });
+    await viewer.getByRole('button', { name:'进入全屏 (F)', exact:true }).tap();
+    await expect(viewer.getByRole('button', { name:'退出全屏 (F)', exact:true })).toBeVisible();
+    await viewer.getByRole('button', { name:'退出全屏 (F)', exact:true }).tap();
+    await action(page, 'home').first().click();
+    await expect(page.locator('.home-hero')).toBeVisible();
+  });
+});
+
+test('leaving a loading viewer cancels it; a model error keeps the rest of the app usable', async ({ page }) => {
+  await page.route('**/api/config', async route => {
+    const response = await route.fetch(), config = await response.json();
+    const workbench = config.samples.find(item => item.id === '3FO4K4XNH9NX');
+    await route.fulfill({ response, json:{ ...config, samples:[{ ...workbench, available:true, assets:{ spz:'/api/samples/3FO4K4XNH9NX/model.spz', ply:null } }] } });
+  });
+  await login(page);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  await page.route('**/api/samples/3FO4K4XNH9NX/model.spz', async route => {
+    await gate;
+    try { await route.fulfill({ status:503, body:'Test model unavailable' }); } catch { /* Navigation intentionally cancelled this request. */ }
+  });
+  await action(page, 'sample').first().click();
+  await expect(page.locator('.viewer-toolbar').getByRole('button', { name:'环绕', exact:true })).toBeDisabled();
+  await expect(page.getByRole('button', { name:'回到初始点', exact:true })).toBeDisabled();
+  await action(page, 'home').first().click(); release();
+  await expect(page.locator('.home-hero')).toBeVisible();
+  await expect(page.locator('.viewer-enhanced')).toHaveCount(0);
+  await action(page, 'sample').first().click();
+  await expect(page.getByText('当前设备未能加载模型', { exact:true })).toBeVisible();
+  await expect(page.locator('.viewer-enhanced')).toHaveCount(0);
+  await action(page, 'home').first().click(); await expect(page.locator('.home-hero')).toBeVisible();
 });
 
 test('old reconstruction does not block a new version; current pending task cannot be resubmitted', async ({ page }) => {

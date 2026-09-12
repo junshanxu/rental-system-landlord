@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readdir } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, mkdir, writeFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -14,7 +14,8 @@ const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypisom0000
 
 async function fixture(t, options = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'rental-mvp-'));
-  let app = createApp({ dataDir: dir, password, env: {}, ...options });
+  const appOptions = { dataDir: dir, samplesRoot: join(dir, 'samples'), password, env: {}, ...options };
+  let app = createApp(appOptions);
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${app.server.address().port}`;
   const client = () => {
@@ -22,7 +23,8 @@ async function fixture(t, options = {}) {
     return {
       async request(path, { method = 'GET', data, bytes, meta, mime, headers = {} } = {}) {
         const response = await fetch(base + path, { method, headers: {
-          Origin: base, Cookie: cookie, 'X-CSRF-Token': csrf,
+          // A restarted test server reuses its port, but must not reuse the prior TCP connection.
+          Origin: base, Cookie: cookie, 'X-CSRF-Token': csrf, Connection: 'close',
           ...(data === undefined ? {} : { 'Content-Type': 'application/json' }),
           ...(bytes ? { 'Content-Type': mime || 'image/png', 'X-Capture-Meta': encodeURIComponent(JSON.stringify(meta)) } : {}), ...headers,
         }, body: bytes || (data === undefined ? undefined : JSON.stringify(data)) });
@@ -53,10 +55,51 @@ async function fixture(t, options = {}) {
   return { app, dir, client, user, async restart() {
     const port = app.server.address().port;
     await new Promise(resolve => app.server.close(resolve)); app.store.db.close();
-    app = createApp({ dataDir: dir, password, env: {}, ...options });
+    app = createApp(appOptions);
     await new Promise(resolve => app.server.listen(port, '127.0.0.1', resolve));
   } };
 }
+
+test('imported samples are separate authenticated assets with ranges, downloads and a fixed catalog', async t => {
+  const { user, client, dir } = await fixture(t);
+  const meetingDir = join(dir, 'samples', '3FO4K4VCF7LG');
+  const workbenchDir = join(dir, 'samples', '3FO4K4XNH9NX');
+  const path = '/api/samples/3FO4K4VCF7LG/model.spz';
+  await mkdir(meetingDir, { recursive: true });
+  await mkdir(workbenchDir, { recursive: true });
+  await writeFile(join(meetingDir, 'meeting-room.spz'), 'meeting-room-spz');
+  await writeFile(join(meetingDir, 'meeting-room.ply'), 'meeting-room-ply');
+  await writeFile(join(workbenchDir, 'workbench.spz'), 'workbench-spz');
+  assert.equal((await client().request(path)).status, 401);
+  const config = (await user.request('/api/config')).value;
+  assert.equal(config.samples[0].id, '3FO4K4VCF7LG');
+  assert.equal(config.samples[0].name, 'Modern Office Meeting Room');
+  assert.equal(config.samples[0].source, 'https://studio.aholo3d.com/viewer?projectId=3FO4K4VCF7LG');
+  assert.equal(config.samples[0].assets.spz, path);
+  assert.equal(config.samples[0].available, true);
+  assert.equal(config.samples[1].assets.ply, null);
+  const range = await user.request(path, { headers: { Range: 'bytes=0-6' } });
+  assert.equal(range.status, 206);
+  assert.equal(range.value.toString(), 'meeting');
+  assert.equal(range.headers.get('content-range'), 'bytes 0-6/16');
+  const head = await user.request(path, { method: 'HEAD' });
+  assert.equal(head.status, 200); assert.equal(head.value.length, 0);
+  assert.equal(head.headers.get('content-length'), '16');
+  const download = await user.request('/api/samples/3FO4K4VCF7LG/model.ply?download=1');
+  assert.equal(download.value.toString(), 'meeting-room-ply');
+  assert.match(download.headers.get('content-disposition'), /meeting-room\.ply/);
+  assert.equal((await user.request('/api/sample/model.spz')).value.toString(), 'workbench-spz');
+  assert.equal((await user.request(path, { headers: { Range: 'bytes=999-1000' } })).status, 416);
+  for (const invalid of ['/api/samples/unknown/model.spz', '/api/samples/%2e%2e%2f/model.spz', '/api/samples/3FO4K4VCF7LG/model.env', '/api/samples/3FO4K4XNH9NX/model.ply']) {
+    assert.equal((await user.request(invalid)).status, 404);
+  }
+  await unlink(join(meetingDir, 'meeting-room.spz'));
+  await unlink(join(meetingDir, 'meeting-room.ply'));
+  assert.equal((await user.request(path)).status, 404);
+  assert.equal((await user.request('/api/config')).value.samples[0].available, false);
+  assert.deepEqual((await user.request('/api/drafts')).value.drafts, []);
+  assert.equal((await user.request('/api/drafts', { method: 'POST', data: { property: 'a', room: 'b' } })).status, 403);
+});
 
 test('session is server-validated; CSRF, origin, logout and expiry are enforced', async t => {
   const { user, client, app } = await fixture(t);

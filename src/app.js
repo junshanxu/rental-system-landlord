@@ -28,7 +28,12 @@ const icon = name => `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="
 const button = (action, label, name = '', cls = 'secondary', extra = '') => `<button class="btn ${cls}" data-action="${action}" ${extra}>${name ? icon(name) : ''}${label}</button>`;
 const date = value => new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
 const bytes = value => value < 1024 * 1024 ? `${Math.ceil(value / 1024)} KB` : `${(value / 1024 / 1024).toFixed(1)} MB`;
-const state = { user: null, csrf: '', config: {}, view: 'home', drafts: [], draft: null, camera: null, viewer: null, pending: [], uploading: false, cameraState: {}, target: '', id: { front: null, back: null, property: null, busy: false, scenario: 'pass', generation: 0 }, mediaFilter: 'all' };
+const state = { user: null, csrf: '', config: {}, view: 'home', drafts: [], draft: null, camera: null, viewer: null, sampleId: null, pending: [], uploading: false, cameraState: {}, target: '', id: { front: null, back: null, property: null, busy: false, scenario: 'pass', generation: 0 }, mediaFilter: 'all' };
+let viewerAbort = null;
+function closeViewer() {
+  viewerAbort?.abort(); viewerAbort = null;
+  state.viewer?.dispose(); state.viewer = null;
+}
 const documentLabels = { front: '身份证人像面', back: '身份证国徽面', property: '房产证' };
 const isVerified = () => state.user?.verification?.status === 'passed';
 function verificationBadge() {
@@ -84,6 +89,7 @@ function roomIllustration() {
 }
 function brand() { return `<a href="#" class="brand" data-action="home"><img src="/icon.svg" width="40" height="40" alt=""/><span>房东采集台<small>RENTAL SPACE</small></span></a>`; }
 function renderLogin(error = '') {
+  closeViewer();
   renderGeneration++;
   $('#app').innerHTML = `<div class="login-page"><header class="login-header">${brand()}<span class="quiet-tag">房东端 · MVP</span></header>
     <main class="login-grid"><section class="login-story"><span class="eyebrow">从现场，到空间</span><h1>让房屋的每一面，<br/>都有迹可循。</h1><p>跟随指导完成现场采集，<br/>把真实细节留给每一次远程看房。</p><div class="art-wrap">${roomIllustration()}<span class="art-label">SPACE CAPTURE / 01</span></div><div class="story-foot"><span>${icon('camera')} 实时采集</span><span>${icon('folder')} 随时暂存</span><span>${icon('cube')} 空间预览</span></div></section>
@@ -201,7 +207,7 @@ function renderReview() {
 }
 const jobLabels = { SUBMITTING: '正在上传与提交', RUNNING: '平台重建中', QUEUED: '排队中', PENDING: '等待处理', SUCCEEDED: '重建完成 · 待验收', UNKNOWN: '状态待核对', FAILED: '任务失败', CANCELLED: '已取消', ASSET_MISSING: '模型资产待处理' };
 function resultPreview(job) {
-  return `<section class="panel"><div class="section-heading"><h2>素材版本 ${job.revision} 三维预览${job.revision === state.draft.revision ? '' : '（补拍前）'}</h2>${button('reset-view', '重置视角', 'refresh', 'secondary small-btn')}</div><div id="model-viewer" class="model-viewer"><div class="viewer-loading">正在准备三维预览…</div></div><p id="viewer-status" class="small muted" role="status">等待加载</p><div class="download-row">${job.result.spz ? `<a class="btn secondary" href="${h(job.result.spz)}" target="_blank" rel="noopener noreferrer">${icon('download')} 下载 SPZ</a>` : ''}${job.result.ply ? `<a class="btn secondary" href="${h(job.result.ply)}" target="_blank" rel="noopener noreferrer">${icon('download')} 下载 PLY</a>` : ''}<a class="text-button" href="https://studio.aholo3d.cn/viewer?projectId=${encodeURIComponent(job.world_id)}" target="_blank" rel="noopener noreferrer">在平台查看</a></div></section>`;
+  return `<section class="panel"><div class="section-heading"><h2>素材版本 ${job.revision} 三维预览${job.revision === state.draft.revision ? '' : '（补拍前）'}</h2><span class="badge blue">交互预览</span></div><div id="model-viewer" class="model-viewer"><div class="viewer-loading">正在准备三维预览…</div></div><p id="viewer-status" class="small muted" role="status">等待加载</p><div class="download-row">${job.result.spz ? `<a class="btn secondary" href="${h(job.result.spz)}" target="_blank" rel="noopener noreferrer">${icon('download')} 下载 SPZ</a>` : ''}${job.result.ply ? `<a class="btn secondary" href="${h(job.result.ply)}" target="_blank" rel="noopener noreferrer">${icon('download')} 下载 PLY</a>` : ''}<a class="text-button" href="https://studio.aholo3d.cn/viewer?projectId=${encodeURIComponent(job.world_id)}" target="_blank" rel="noopener noreferrer">在平台查看</a></div></section>`;
 }
 function renderResult() {
   const d = state.draft;
@@ -213,18 +219,32 @@ function renderResult() {
   if (ready) loadViewer(latest.result.spz || latest.result.ply, latest.result.upAxis);
 }
 function renderSample() {
-  shell(`${heading('三维重建样例', '一个真实重建，和它的局限', '硬件工程师工作台 · Aholo 历史试验 · 与你的房屋采集相互独立')}
-  <div class="notice warning">${icon('info')}<p>此样例由 35 张已有照片重建，存在模糊、拖影与漂浮伪影，仅用于体验预览。它不是本次拍摄的结果，也未通过正式看房验收。</p></div><div class="sample-layout"><section class="panel"><div class="section-heading"><h2>${icon('cube')} 工作台三维预览</h2>${button('reset-view','重置视角','refresh','secondary small-btn')}</div><div id="model-viewer" class="model-viewer large"><div class="viewer-loading">${state.config.sample?'正在准备三维模型…':'本机未找到样例模型文件，请参阅使用说明。'}</div></div><p id="viewer-status" class="small muted" role="status"></p><div class="download-row">${state.config.sample ? '<a href="/api/sample/model.spz?download=1" class="btn secondary">'+icon('download')+' 下载 SPZ</a><a href="/api/sample/model.ply?download=1" class="btn secondary">'+icon('download')+' 下载 PLY</a>' : ''}<a class="text-button" href="https://studio.aholo3d.cn/viewer?projectId=3FO4K4XNH9NX" target="_blank" rel="noopener noreferrer">在平台查看 ${icon('arrow')}</a></div></section><aside class="panel sample-details"><span class="eyebrow">工作台重建记录</span><h2>从样例了解预览效果</h2><p>桌面、隔板和工具箱可辨认；细小工具、人物和场景边缘存在明显失真。</p><dl class="summary-list"><div><dt>输入</dt><dd>35 张照片</dd></div><div><dt>重建模式</dt><dd>极速预览 / low</dd></div><div><dt>平台处理时间</dt><dd>约 4 分钟</dd></div><div><dt>质量状态</dt><dd>未验收</dd></div></dl>${button('new','开始自己的采集','camera','primary full')}</aside></div>`);
-  if (state.config.sample) loadViewer('/api/sample/model.spz', 'Z');
+  const samples = state.config.samples || [];
+  const selected = samples.find(item => item.id === state.sampleId) || samples.find(item => item.available) || samples[0];
+  if (!selected) {
+    shell(`${heading('三维预览台', '走近空间，自由查看', '查看已有三维空间')}<div class="notice">本机未配置样例，请参阅使用说明并刷新页面。</div>`);
+    return;
+  }
+  state.sampleId = selected.id;
+  const modelUrl = selected.assets.spz || selected.assets.ply;
+  shell(`${heading('三维预览台', '走近空间，自由查看', `${h(selected.title)} · 通过移动、转向与缩放，查看不同位置的重建细节`)}
+  <div class="sample-picker" role="group" aria-label="选择预览样例">${samples.map(item => `<button type="button" data-action="select-sample" data-id="${h(item.id)}" aria-pressed="${item.id === selected.id}">${icon('cube')}<span><strong>${h(item.title)}</strong><small>${h(item.kind)} · ${item.available ? '可预览' : '本机未安装'}</small></span>${item.id === selected.id ? icon('check') : ''}</button>`).join('')}</div>
+  <div class="notice warning">${icon('info')}<p>${h(selected.notice)}</p></div>
+  <div class="sample-layout"><section class="panel"><div class="section-heading"><h2>${icon('cube')} ${h(selected.title)}</h2><span class="badge blue">交互预览</span></div><div id="model-viewer" class="model-viewer large"><div class="viewer-loading">${modelUrl ? '正在准备三维模型…' : '本机未找到此样例模型文件，请参阅使用说明。'}</div></div><p id="viewer-status" class="small muted" role="status"></p>
+  <div class="download-row">${['spz', 'ply'].filter(format => selected.assets[format]).map(format => `<a href="${h(selected.assets[format])}?download=1" class="btn secondary">${icon('download')} 下载 ${format.toUpperCase()}</a>`).join('')}<a class="text-button" href="${h(selected.source)}" target="_blank" rel="noopener noreferrer">在平台查看 ${icon('arrow')}</a></div></section>
+  <aside class="panel sample-details"><span class="eyebrow">${h(selected.kind)}记录</span><h2>从样例了解预览效果</h2><p>${h(selected.description)}</p><dl class="summary-list">${selected.facts.map(([label, value]) => `<div><dt>${h(label)}</dt><dd>${h(value)}</dd></div>`).join('')}</dl>${button('new','开始自己的采集','camera','primary full')}</aside></div>`);
+  if (modelUrl) loadViewer(modelUrl, selected.upAxis, selected.initialView);
 }
-async function loadViewer(url, upAxis) {
+async function loadViewer(url, upAxis, initialView) {
   const generation = renderGeneration;
+  viewerAbort?.abort();
+  const abort = new AbortController(); viewerAbort = abort;
   try {
     const { mountViewer } = await import('./viewer.js');
-    if (generation !== renderGeneration) return;
-    const viewer = await mountViewer($('#model-viewer'), url, { upAxis, onStatus: message => { if (generation === renderGeneration && $('#viewer-status')) $('#viewer-status').textContent = message; } });
+    if (generation !== renderGeneration || abort.signal.aborted) return;
+    const viewer = await mountViewer($('#model-viewer'), url, { upAxis, initialView, signal: abort.signal, onStatus: message => { if (generation === renderGeneration && $('#viewer-status')) $('#viewer-status').textContent = message; } });
     if (generation !== renderGeneration) viewer.dispose(); else state.viewer = viewer;
-  } catch (error) { if (generation === renderGeneration && $('#model-viewer')) { $('#model-viewer').innerHTML = `<div class="viewer-loading">${icon('cube')}<h3>当前设备未能加载模型</h3><p>${h(error.message)}</p><p>可下载模型，或通过下方链接在平台查看。</p></div>`; $('#viewer-status').textContent = '预览未完成，不代表模型通过验收。'; } }
+  } catch (error) { if (!abort.signal.aborted && generation === renderGeneration && $('#model-viewer')) { $('#model-viewer').classList.remove('viewer-enhanced'); $('#model-viewer').innerHTML = `<div class="viewer-loading">${icon('cube')}<h3>当前设备未能加载模型</h3><p>${h(error.message)}</p><p>可下载模型，或通过下方链接在平台查看。</p></div>`; $('#viewer-status').textContent = '预览未完成，不代表模型通过验收。'; } }
 }
 async function navigate(view, draftId) {
   if (!state.user) return renderLogin();
@@ -240,7 +260,7 @@ async function navigate(view, draftId) {
   }
   if (state.uploading) throw new Error('素材正在保存，请稍候。');
   if (state.view === 'account' && view !== 'account') clearIdentity();
-  state.viewer?.dispose(); state.viewer = null;
+  closeViewer();
   if (draftId && view !== 'account') state.draft = await api(`/api/drafts/${draftId}`);
   if (['capture', 'review', 'result'].includes(view) && !state.draft) view = 'home';
   if (view === 'home') state.drafts = (await api('/api/drafts')).drafts;
@@ -294,6 +314,13 @@ async function action(name, el) {
   if (name === 'account') return navigate('account');
   if (name === 'home') return navigate('home');
   if (name === 'sample') return navigate('sample');
+  if (name === 'select-sample') {
+    if (state.view !== 'sample' || state.sampleId === el.dataset.id || !state.config.samples.some(item => item.id === el.dataset.id)) return;
+    state.sampleId = el.dataset.id;
+    await navigate('sample');
+    if (state.user && state.view === 'sample') $('[data-action="select-sample"][aria-pressed="true"]')?.focus();
+    return;
+  }
   if (name === 'new') return newDialog();
   if (name === 'resume') return navigate('capture', el.dataset.id);
   if (name === 'capture') { state.target = ''; return navigate('capture'); }
@@ -302,7 +329,7 @@ async function action(name, el) {
     if (state.camera) { await state.camera.close(); state.camera = null; }
     if (state.pending.length) throw new Error('有素材尚未保存，请先重试保存。');
     await api('/api/logout', { method: 'POST' });
-    clearIdentity(); state.viewer?.dispose(); state.viewer = null; state.user = null; state.draft = null; renderLogin(); return;
+    clearIdentity(); state.user = null; state.draft = null; renderLogin(); return;
   }
   if (name === 'id-example') return exampleId(el.dataset.side);
   if (name === 'id-remove') return updateVerification(async () => { await resetVerification(); removeIdentity(el.dataset.side); });

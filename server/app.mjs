@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { openStore, passwordMatches, passwordHash, tokenHash } from './store.mjs';
 import { createProviders, reconstructionInput } from './providers.mjs';
+import { createSampleCatalog } from './samples.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_MEDIA = 50 * 1024 * 1024;
@@ -73,7 +74,7 @@ export function createApp(options = {}) {
   const store = openStore(options.dataDir || join(root, '.data'), options);
   const { db } = store;
   const providers = options.providers || createProviders(env);
-  const sampleDir = options.sampleDir || join(root, 'outputs', 'aholo', '3FO4K4XNH9NX');
+  const samples = createSampleCatalog(options.samplesRoot || join(root, 'outputs', 'aholo'), options.sampleDir);
   const dist = join(root, 'dist');
   const loginAttempts = new Map();
   const liveRequests = new Map();
@@ -153,7 +154,7 @@ export function createApp(options = {}) {
       const { user, session } = auth(req);
       if (path === '/api/session' && method === 'GET') return send(res, { user: store.publicUser(user), csrf: session.csrf });
       if (path === '/api/logout' && method === 'POST') { db.prepare('DELETE FROM sessions WHERE token=?').run(session.token); res.setHeader('Set-Cookie', cookie('', true)); return send(res, { ok: true }); }
-      if (path === '/api/config' && method === 'GET') return send(res, { vision: providers.visionEnabled, reconstruction: providers.reconstructionEnabled, sample: existsSync(join(sampleDir, 'workbench.spz')), maxMediaBytes: MAX_MEDIA, maxSeconds: 60 });
+      if (path === '/api/config' && method === 'GET') return send(res, { vision: providers.visionEnabled, reconstruction: providers.reconstructionEnabled, sample: Boolean(samples.asset('3FO4K4XNH9NX', 'spz')), samples: samples.list(), maxMediaBytes: MAX_MEDIA, maxSeconds: 60 });
       if (path === '/api/identity-mock' && method === 'POST') {
         fail(410, '身份检查已迁移至用户中心，请完成身份证与房产证核验。');
       }
@@ -331,9 +332,12 @@ export function createApp(options = {}) {
         } else if (method !== 'GET' && !(method === 'POST' && jobMatch[2] === 'refresh')) fail(405, '不支持的操作。');
         return send(res, ownDraft(job.draft_id, user));
       }
-      if (/^\/api\/sample\/model\.(spz|ply)$/.test(path) && ['GET', 'HEAD'].includes(method)) {
-        const ext = path.endsWith('.spz') ? 'spz' : 'ply';
-        return streamFile(req, res, join(sampleDir, `workbench.${ext}`), 'application/octet-stream', url.searchParams.has('download') ? `workbench.${ext}` : null);
+      const sampleMatch = /^\/api\/samples\/([A-Z0-9]+)\/model\.(spz|ply)$/.exec(path);
+      const legacySampleMatch = /^\/api\/sample\/model\.(spz|ply)$/.exec(path);
+      if ((sampleMatch || legacySampleMatch) && ['GET', 'HEAD'].includes(method)) {
+        const asset = samples.asset(sampleMatch ? sampleMatch[1] : '3FO4K4XNH9NX', sampleMatch ? sampleMatch[2] : legacySampleMatch[1]);
+        if (!asset) fail(404, '本机未找到此样例模型文件，请参阅使用说明。');
+        return streamFile(req, res, asset.path, 'application/octet-stream', url.searchParams.has('download') ? asset.name : null);
       }
       fail(404, '接口不存在。');
     }
