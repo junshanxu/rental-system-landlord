@@ -60,7 +60,7 @@ export function openStore(directory, options = {}) {
   if (!db.prepare('SELECT id FROM users LIMIT 1').get()) {
     const username = options.username || 'landlord';
     const password = options.password || randomBytes(12).toString('base64url');
-    if (password.length < 12) throw new Error('Initial password must contain at least 12 characters.');
+    if (password.length < 6) throw new Error('Initial password must contain at least 6 characters.');
     db.prepare('INSERT INTO users (id,username,password) VALUES (?,?,?)').run(randomUUID(), username, passwordHash(password));
     if (!options.password) {
       writeFileSync(join(dir, 'local-login.txt'), `本机 MVP 登录账号\n地址：http://localhost:${options.port || 4317}\n账号：${username}\n密码：${password}\n\n仅供本机体验。不要提交此文件。\n`, { mode: 0o600, flag: 'wx' });
