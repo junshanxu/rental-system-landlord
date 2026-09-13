@@ -28,7 +28,7 @@ const icon = name => `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="
 const button = (action, label, name = '', cls = 'secondary', extra = '') => `<button class="btn ${cls}" data-action="${action}" ${extra}>${name ? icon(name) : ''}${label}</button>`;
 const date = value => new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
 const bytes = value => value < 1024 * 1024 ? `${Math.ceil(value / 1024)} KB` : `${(value / 1024 / 1024).toFixed(1)} MB`;
-const state = { user: null, csrf: '', config: {}, view: 'home', drafts: [], draft: null, camera: null, viewer: null, sampleId: null, pending: [], uploading: false, cameraState: {}, target: '', id: { front: null, back: null, property: null, busy: false, scenario: 'pass', generation: 0 }, mediaFilter: 'all' };
+const state = { user: null, csrf: '', config: {}, view: 'home', drafts: [], draft: null, camera: null, viewer: null, propertySummary: null, pending: [], uploading: false, cameraState: {}, target: '', importedModel: null, id: { front: null, back: null, property: null, busy: false, scenario: 'pass', generation: 0 }, mediaFilter: 'all' };
 let viewerAbort = null;
 function closeViewer() {
   viewerAbort?.abort(); viewerAbort = null;
@@ -37,8 +37,9 @@ function closeViewer() {
 const documentLabels = { front: '身份证人像面', back: '身份证国徽面', property: '房产证' };
 const isVerified = () => state.user?.verification?.status === 'passed';
 function verificationBadge() {
-  const status = state.user?.verification?.status;
-  return `<span class="badge ${status === 'passed' ? 'green' : status === 'failed' ? 'red' : ''}">${status === 'passed' ? '已通过 · Mock' : status === 'failed' ? '核验未通过' : '未核验'}</span>`;
+  const verification = state.user?.verification, status = verification?.status;
+  const label = verification?.result === 'dev-skip' ? '开发已跳过' : status === 'passed' ? '已通过 · Mock' : status === 'failed' ? '核验未通过' : '未核验';
+  return `<span class="badge ${status === 'passed' ? 'green' : status === 'failed' ? 'red' : ''}">${label}</span>`;
 }
 async function refreshAccount() { const session = await api('/api/session'); state.user = session.user; state.csrf = session.csrf; }
 let toastTimer, renderGeneration = 0;
@@ -100,14 +101,14 @@ function stepIndex() { return ({ capture: 0, review: 1, result: 2 })[state.view]
 function shell(content) {
   $('#toast').hidden = true;
   const step = stepIndex();
-  $('#app').innerHTML = `<div class="app-shell"><aside class="sidebar">${brand()}<div class="nav-caption">工作空间</div><nav aria-label="主导航">${button('home', '我的采集', 'folder', state.view === 'home' ? 'nav active' : 'nav')}${button('sample', '重建样例', 'cube', state.view === 'sample' ? 'nav active' : 'nav')}${button('account', '用户中心', 'shield', state.view === 'account' ? 'nav active' : 'nav')}</nav><div class="sidebar-bottom"><span class="connection-dot"></span><span>本机工作空间<small>素材保存在当前服务</small></span></div></aside><div class="app-main"><header class="topbar"><div class="breadcrumb">房东端 <span>/</span> ${h(state.view === 'home' ? '我的采集' : state.view === 'sample' ? '重建样例' : state.view === 'account' ? '用户中心' : stepLabels[step])}</div><div class="account"><button class="account-link" data-action="account" aria-label="用户中心，查看核验状态"><span class="avatar">房</span><span class="account-name">${h(state.user.username)}</span>${verificationBadge()}</button>${button('logout', '<span class="logout-text">退出</span>', 'logout', 'icon-button', 'aria-label="退出登录"')}</div></header><main class="content">${step >= 0 ? `<div class="stepper" aria-label="采集步骤">${stepLabels.map((label, i) => `<div class="step ${i === step ? 'current' : i < step ? 'done' : ''}" ${i === step ? 'aria-current="step"' : ''}><span>${i < step ? icon('check') : `0${i + 1}`}</span><strong>${label}</strong></div>`).join('')}</div>` : ''}${content}</main><footer class="app-footer">租房系统 · 房东端 <span>本地 MVP / v0.2</span></footer></div></div>`;
+  $('#app').innerHTML = `<div class="app-shell"><aside class="sidebar">${brand()}<div class="nav-caption">工作空间</div><nav aria-label="主导航">${button('home', '我的采集', 'folder', state.view === 'home' ? 'nav active' : 'nav')}${button('account', '用户中心', 'shield', state.view === 'account' ? 'nav active' : 'nav')}</nav><div class="sidebar-bottom"><span class="connection-dot"></span><span>本机工作空间<small>素材保存在当前服务</small></span></div></aside><div class="app-main"><header class="topbar"><div class="breadcrumb">房东端 <span>/</span> ${h(state.view === 'home' ? '我的采集' : state.view === 'account' ? '用户中心' : state.view === 'model' ? '本地模型预览' : stepLabels[step])}</div><div class="account"><button class="account-link" data-action="account" aria-label="用户中心，查看核验状态"><span class="avatar">房</span><span class="account-name">${h(state.user.username)}</span>${verificationBadge()}</button>${button('logout', '<span class="logout-text">退出</span>', 'logout', 'icon-button', 'aria-label="退出登录"')}</div></header><main class="content">${step >= 0 ? `<div class="stepper" aria-label="采集步骤">${stepLabels.map((label, i) => `<div class="step ${i === step ? 'current' : i < step ? 'done' : ''}" ${i === step ? 'aria-current="step"' : ''}><span>${i < step ? icon('check') : `0${i + 1}`}</span><strong>${label}</strong></div>`).join('')}</div>` : ''}${content}</main><footer class="app-footer">租房系统 · 房东端 <span>本地 MVP / v0.2</span></footer></div></div>`;
 }
 function heading(kicker, title, subtitle, actions = '') { return `<div class="page-heading"><div><span class="eyebrow">${kicker}</span><h1>${title}</h1><p>${subtitle}</p></div>${actions ? `<div class="heading-actions">${actions}</div>` : ''}</div>`; }
 function draftStatus(d) { if (!d.media_count && !d.media?.length) return '待拍摄'; if (d.confirmed_revision === d.revision) return '已人工复核'; if (d.review_revision === d.revision) return '待人工复核'; return '采集草稿'; }
 function renderHome() {
   const drafts = state.drafts, verified = isVerified();
-  shell(`${heading('房屋采集工作空间', '每一次记录，都从现场开始。', '创建一次房间采集，或从上次保存的位置继续。', button(verified ? 'new' : 'account', verified ? '开始新采集' : '前往用户中心核验', verified ? 'plus' : 'shield', 'primary'))}
-  ${!verified ? `<div class="notice warning verification-gate">${icon('shield')}<p><strong>完成证件核验后，即可开始采集。</strong><br/>请在用户中心补齐身份证两面与房产证。未通过时，新建与继续采集暂不可用；已有记录会保留。</p></div>` : ''}<section class="home-hero"><div><span class="soft-label">你的现场采集助手</span><h2>拍得清楚，<br/>才能看得真实。</h2><p>实时拍摄 · 弹幕指导 · 拍后复查<br/>把房间全貌和重要细节，一起留下。</p><div class="hero-actions">${button(verified ? 'new' : 'account', verified ? (drafts.length ? '开始新的采集' : '创建我的第一次采集') : '完成核验，开启采集', verified ? 'arrow' : 'shield', 'primary')}${button('sample', '先看看重建样例', '', 'text-button')}</div></div><div class="hero-art">${roomIllustration()}</div></section>
+  shell(`${heading('房屋采集工作空间', '每一次记录，都从现场开始。', '创建一次房间采集，或从上次保存的位置继续。', `${button(verified ? 'new' : 'account', verified ? '开始新采集' : '前往用户中心核验', verified ? 'plus' : 'shield', 'primary')}${button('import-ply', '导入 PLY 预览', 'cube', 'secondary')}`)}
+  ${!verified ? `<div class="notice warning verification-gate">${icon('shield')}<p><strong>完成证件核验后，即可开始采集。</strong><br/>请在用户中心补齐身份证两面与房产证。未通过时，新建与继续采集暂不可用；已有记录会保留。</p></div>` : ''}<section class="home-hero"><div><span class="soft-label">你的现场采集助手</span><h2>拍得清楚，<br/>才能看得真实。</h2><p>实时拍摄 · 弹幕指导 · 拍后复查<br/>把房间全貌和重要细节，一起留下。</p><div class="hero-actions">${button(verified ? 'new' : 'account', verified ? (drafts.length ? '开始新的采集' : '创建我的第一次采集') : '完成核验，开启采集', verified ? 'arrow' : 'shield', 'primary')}</div></div><div class="hero-art">${roomIllustration()}</div></section>
   <section class="journey-strip" aria-label="采集流程">${[['camera','01','现场采集','在相机里完成照片或录像'],['scan','02','拍后复查','回看素材，补拍并人工确认'],['cube','03','空间成果','查看成果，对照实拍细节']].map(([i,n,t,d])=>`<div><span class="journey-icon">${icon(i)}</span><p><small>${n} / ${t}</small><strong>${d}</strong></p></div>`).join('')}</section>
   <section class="drafts-section"><div class="section-heading"><h2>最近的采集 <span class="count">${drafts.length}</span></h2><span class="muted small">按最近保存时间排序</span></div>${drafts.length ? `<div class="draft-grid">${drafts.map(d=>`<article class="draft-card"><div class="draft-icon">${icon('home')}</div><div class="draft-title"><h3>${h(d.property)}</h3><span class="badge">${draftStatus(d)}</span></div><p class="muted">${h(d.room)} · ${d.media_count} 份素材</p><div class="draft-bottom"><span>${icon('clock')} ${date(d.updated)}</span>${button(verified ? 'resume' : 'account', verified ? '继续采集' : '核验后继续', verified ? 'arrow' : 'shield', 'text-button', `data-id="${d.id}"`)}</div></article>`).join('')}</div>` : `<div class="empty-drafts">${icon('folder')}<h3>还没有采集记录</h3><p>拍摄完成后自动保存到本机，下次回来可以接着拍。</p>${button(verified ? 'new' : 'account', verified ? '创建采集' : '前往核验', verified ? 'plus' : 'shield', 'secondary')}</div>`}</section>`);
 }
@@ -117,6 +118,7 @@ function idCard(side) {
 }
 function renderAccount() {
   const verification = state.user.verification, passed = isVerified(), busy = state.id.busy;
+  const developmentSkip = verification.result === 'dev-skip';
   const messages = { glare: '身份证人像面存在模拟反光，请重新选择或切换场景后重试。', edge: '身份证国徽面模拟边角缺失，请重新选择或切换场景后重试。', property: '房产证信息页模拟不完整，请补齐后重新核验。', failed: '模拟核验服务失败，请稍后重试。' };
   const feedback = busy ? '正在处理，请稍候…' : messages[verification.result] || '请补齐身份证人像面、国徽面和房产证，再提交模拟核验。';
   shell(`${heading('账号与核验', '用户中心', '在这里完成证件核验，通过后开启房屋采集。')}
@@ -124,7 +126,7 @@ function renderAccount() {
     ${state.pending.length ? '<div class="notice warning"><p>有尚未保存的拍摄素材保留在本页面内存中。请勿刷新或关闭页面，核验通过后可继续保存。</p></div>' : ''}
     <div class="section-heading verification-heading"><h2>证件核验</h2><span class="badge blue">流程 Mock</span></div>
     <div class="notice">${icon('info')}<p>请使用示例或测试图片。图片只在当前页面预览，离开后清除；仅保存模拟核验状态。Mock 不代表真实身份或房屋权属已核验。</p></div>
-    ${passed ? `<section class="panel verification-approved"><span class="approval-symbol">${icon('check')}</span><h2>证件核验已通过 <small>（Mock）</small></h2><p>已满足本轮体验的采集准入条件。</p><div class="verified-documents">${Object.values(documentLabels).map(label => `<div>${icon('check')}<strong>${label}</strong><span>模拟通过</span></div>`).join('')}</div><p class="small muted">核验时间：${date(verification.checkedAt)} · 证件图片未留存</p><div class="verification-actions">${button(state.pending.length ? 'resume-pending' : 'home', state.pending.length ? '继续保存拍摄素材' : '返回我的采集', 'arrow', 'primary')}${button('id-reset', '重新核验', 'refresh', 'secondary', busy ? 'disabled' : '')}</div><p class="small muted">重新核验后，采集权限暂停，待再次通过后恢复。</p></section>` : `<fieldset class="verification-form" ${busy ? 'disabled' : ''}><legend class="sr-only">身份证与房产证模拟核验</legend><div class="identity-layout"><div><div class="identity-pair">${Object.keys(documentLabels).map(idCard).join('')}</div><div class="scenario-row"><label for="id-scenario">模拟检查场景</label><select id="id-scenario">${[['pass','正常通过'],['glare','身份证人像面反光'],['edge','身份证国徽面边角不完整'],['property','房产证信息页不完整'],['failed','核验服务失败']].map(([value,label]) => `<option value="${value}" ${state.id.scenario === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div></div><aside class="panel inspection"><span class="eyebrow">采集前的准备</span><h2>核验通过，即可采集</h2><ol class="check-steps"><li><span>1</span><div><strong>补齐三项资料</strong><p>身份证两面与房产证均需提供</p></div></li><li><span>2</span><div><strong>完成模拟核验</strong><p>未通过时可更换资料并重试</p></div></li><li><span>3</span><div><strong>获得采集权限</strong><p>新建或继续已有房间采集</p></div></li></ol><div id="id-feedback" class="result-note" role="status">${h(feedback)}</div>${button('id-check', busy ? '处理中…' : '提交模拟核验', 'scan', 'primary full', busy ? 'disabled' : '')}<p class="small muted verification-footnote">证件核验独立于采集流程，完成后无需每次重复。</p></aside></div></fieldset>`}`);
+    ${passed ? `<section class="panel verification-approved"><span class="approval-symbol">${icon('check')}</span><h2>${developmentSkip ? '已跳过证件核验' : '证件核验已通过'} <small>（${developmentSkip ? '开发模式' : 'Mock'}）</small></h2><p>${developmentSkip ? '仅为本机开发体验开放采集权限，不代表真实身份或房屋权属已核验。' : '已满足本轮体验的采集准入条件。'}</p><div class="verified-documents">${Object.values(documentLabels).map(label => `<div>${icon('check')}<strong>${label}</strong><span>${developmentSkip ? '开发跳过' : '模拟通过'}</span></div>`).join('')}</div><p class="small muted">${developmentSkip ? '未选择、上传或保存任何证件图片' : `核验时间：${date(verification.checkedAt)} · 证件图片未留存`}</p><div class="verification-actions">${button(state.pending.length ? 'resume-pending' : 'home', state.pending.length ? '继续保存拍摄素材' : '返回我的采集', 'arrow', 'primary')}${button('id-reset', '重新核验', 'refresh', 'secondary', busy ? 'disabled' : '')}</div><p class="small muted">重新核验后，采集权限暂停，待再次通过后恢复。</p></section>` : `<fieldset class="verification-form" ${busy ? 'disabled' : ''}><legend class="sr-only">身份证与房产证模拟核验</legend><div class="identity-layout"><div><div class="identity-pair">${Object.keys(documentLabels).map(idCard).join('')}</div><div class="scenario-row"><label for="id-scenario">模拟检查场景</label><select id="id-scenario">${[['pass','正常通过'],['glare','身份证人像面反光'],['edge','身份证国徽面边角不完整'],['property','房产证信息页不完整'],['failed','核验服务失败']].map(([value,label]) => `<option value="${value}" ${state.id.scenario === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div></div><aside class="panel inspection"><span class="eyebrow">采集前的准备</span><h2>核验通过，即可采集</h2><ol class="check-steps"><li><span>1</span><div><strong>补齐三项资料</strong><p>身份证两面与房产证均需提供</p></div></li><li><span>2</span><div><strong>完成模拟核验</strong><p>未通过时可更换资料并重试</p></div></li><li><span>3</span><div><strong>获得采集权限</strong><p>新建或继续已有房间采集</p></div></li></ol><div id="id-feedback" class="result-note" role="status">${h(feedback)}</div>${button('id-check', busy ? '处理中…' : '提交模拟核验', 'scan', 'primary full', busy ? 'disabled' : '')}${state.config.identityBypass ? `${button('id-dev-skip', '开发模式：跳过证件核验', 'arrow', 'secondary full', busy ? 'disabled' : '')}<p class="small muted verification-footnote">仅供本机开发体验，不上传或保存任何证件图片。</p>` : ''}<p class="small muted verification-footnote">证件核验独立于采集流程，完成后无需每次重复。</p></aside></div></fieldset>`}`);
 }
 async function newDialog() {
   await refreshAccount();
@@ -133,17 +135,31 @@ async function newDialog() {
 }
 function showDialog(content) { $('#dialog')?.remove(); const dialog = document.createElement('dialog'); dialog.id = 'dialog'; dialog.innerHTML = `${button('close-dialog', '', 'close', 'dialog-close icon-button', 'aria-label="关闭弹窗"')}${content}`; document.body.append(dialog); dialog.addEventListener('close', () => dialog.remove()); dialog.showModal(); }
 function countMedia() { return state.draft.media.filter(m=>m.purpose !== 'video-frame').length; }
+const capturePlan = [
+  { title: '第 1 段：墙顶交界', instruction: '手机贴近墙面，让“墙壁与天花板交界”保持在画面水平线上；沿墙缓慢走，转角放慢并以小弧线过渡。' },
+  { title: '第 2 段：墙地交界', instruction: '仍贴近墙面，让“墙壁与地板交界”保持在画面水平线上；按同一方向绕房间拍摄，不要在原地久停。' },
+  { title: '第 3 段：垂直地板', instruction: '手机镜头垂直朝向地板，沿可通行区域平稳移动，覆盖地面和家具底部附近的视角。' },
+  { title: '第 4 段：细节补充', instruction: '按需补拍门洞、窗边、柜体、厨卫或遮挡区域；对文字和细节从不同角度靠近拍，不要拍镜面或移动的人。' },
+];
+function recordedVideos() { return state.draft.media.filter(m => m.kind === 'video').sort((a, b) => Date.parse(a.captured) - Date.parse(b.captured)); }
+function currentCaptureStep() { return capturePlan[Math.min(recordedVideos().length, capturePlan.length - 1)]; }
+function videoStepLabel(media) { const index = recordedVideos().findIndex(item => item.id === media.id); return index >= 0 ? capturePlan[index]?.title || '补充录像' : '现场录像'; }
+function capturePlanStatus() {
+  const completedVideos = recordedVideos().length, activeStep = currentCaptureStep();
+  return `<div class="section-heading"><h2>${icon('scan')} 四段录像指导</h2><span class="badge blue">${Math.min(completedVideos, 4)} / 4 段</span></div><p class="capability-note">依据群核室内空间方法：固定光线与白平衡，慢速连续移动，保持相邻画面约 70% 重叠；转角以小角度、慢速度过渡。</p><ol class="capture-plan-list">${capturePlan.map((step, index) => `<li class="${index < completedVideos ? 'done' : index === completedVideos ? 'current' : ''}"><span>${index < completedVideos ? icon('check') : index + 1}</span><div><strong>${h(step.title)}</strong><p>${h(step.instruction)}</p></div></li>`).join('')}</ol>${completedVideos < capturePlan.length ? `<div class="active-capture-step"><strong>现在录制：${h(activeStep.title)}</strong><p>${h(activeStep.instruction)}</p></div>` : '<div class="active-capture-step complete"><strong>四段录像已完成</strong><p>请进入复查，确认没有漏拍的门洞、墙角或关键细节。</p></div>'}`;
+}
 function captureStrip() {
-  return state.draft.media.filter(m=>m.purpose !== 'video-frame').slice(-8).reverse().map(m=>`<button class="thumb" data-action="media" data-id="${m.id}" aria-label="查看${m.kind === 'photo' ? '照片' : '录像'}">${m.kind === 'photo' ? `<img src="${m.url}" alt="已拍照片"/>` : `<span>${icon('video')} ${Math.round(m.duration)}s</span>`}${m.purpose === 'check' ? '<small>检查</small>' : ''}</button>`).join('');
+  return state.draft.media.filter(m=>m.purpose !== 'video-frame').slice(-8).reverse().map(m=>`<button class="thumb" data-action="media" data-id="${m.id}" aria-label="查看${m.kind === 'photo' ? '照片' : videoStepLabel(m)}">${m.kind === 'photo' ? `<img src="${m.url}" alt="已拍照片"/>` : `<span>${icon('video')} ${Math.round(m.duration)}s</span>`}${m.kind === 'video' ? `<small>${h(videoStepLabel(m))}</small>` : m.purpose === 'check' ? '<small>检查</small>' : ''}</button>`).join('');
 }
 function renderCapture() {
   const d = state.draft;
+  const completedVideos = recordedVideos().length, activeStep = currentCaptureStep();
   state.cameraState = {};
   shell(`${heading('01 / 现场采集', `${h(d.room)}，从一个稳定的视角开始`, `${h(d.property)} · 全部房屋素材仅通过实时相机采集`, button('save-exit', '暂存并退出', 'folder', 'secondary'))}
     ${state.target ? `<div class="notice">${icon('scan')}<p><strong>本次补拍目标：</strong>${h(state.target)}</p></div>` : ''}
     <div class="capture-layout"><section><div class="camera-stage"><video id="camera-video" autoplay muted playsinline aria-label="实时相机画面"></video><div class="camera-overlay" id="camera-empty"><span class="camera-symbol">${icon('camera')}</span><h2>准备好，开始现场记录</h2><p id="camera-error">开启相机后，可拍照或录制最长 60 秒的视频。</p>${button('open-camera', '开启实时相机', 'camera', 'primary')}</div><div class="frame-corners" aria-hidden="true"></div><div id="live-indicator" class="live-indicator" hidden><span></span> 实时画面</div><div class="camera-room-label">${icon('home')}${h(d.room)}</div><div id="danmaku" class="danmaku" role="status" hidden><span id="tip-source"></span><strong id="tip-text"></strong></div><div id="record-time" class="record-time" hidden>00:00</div></div>
-    <div class="camera-controls"><div class="capture-select"><label for="capture-purpose">照片用途</label><select id="capture-purpose"><option value="reconstruction">重建照片</option><option value="check">检查近照（不参与重建）</option></select></div><div class="capture-buttons">${button('take-photo', '拍照', 'camera', 'capture-photo', 'disabled')}${button('record', '开始录像', 'video', 'secondary', 'disabled')}${button('pause', '暂停', '', 'secondary', 'hidden')}</div></div><div class="save-status" id="save-status">${icon('check')} <span>已保存 ${countMedia()} 份素材 · 本机持久保存</span></div><div id="pending-warning" class="notice warning" ${state.pending.length ? '' : 'hidden'}><p>有素材尚未保存，请保留此页面并重试。</p>${button('retry-save', '重试保存', 'refresh', 'secondary small-btn')}</div><div class="capture-strip" id="capture-strip">${captureStrip()}</div></section>
-    <aside class="capture-aside"><section class="panel"><div class="section-heading"><h2>${icon('scan')} 拍摄指导</h2><span class="badge blue">${state.config.vision ? 'Agent 可用' : '本地模式'}</span></div><div class="toggle-row"><div><strong>实时弹幕</strong><small>在画面中显示简短建议</small></div><label class="switch"><input type="checkbox" id="tips-toggle" checked aria-label="实时弹幕"/><span></span></label></div>${state.config.vision ? `<label class="consent"><input type="checkbox" id="remote-toggle"/>启用 Agent 图像分析（约每 10 秒发送一帧到已配置服务）</label>` : '<p class="capability-note">当前提供本地亮度检查与基础拍摄建议。视觉 Agent 尚未连接，不判断空间是否完整。</p>'}<div class="capture-tips"><div>${icon('sun')}<p><strong>光线自然、画面清楚</strong><small>避免强反光和大面积过曝</small></p></div><div>${icon('camera')}<p><strong>慢慢移动，保持重叠</strong><small>覆盖墙角、门窗和遮挡位置</small></p></div><div>${icon('eye')}<p><strong>重要细节，额外拍一张</strong><small>检查近照将用于成果对照</small></p></div></div></section><section class="panel next-card"><span class="eyebrow">下一步</span><h2>拍完，再一起看一遍</h2><p>回看素材，记录需要补拍的位置，确认后再进入重建。</p>${button('finish-capture', '结束拍摄，进入复查', 'arrow', 'primary full')}<span class="small muted">结束录像后会先保存，再进入复查。</span></section></aside></div>`);
+    <div class="camera-controls"><div class="capture-select"><label for="capture-purpose">照片用途</label><select id="capture-purpose"><option value="reconstruction">重建照片</option><option value="check">检查近照（不参与重建）</option></select></div><div class="capture-buttons">${button('take-photo', '拍照', 'camera', 'capture-photo', 'disabled')}${button('record', completedVideos >= capturePlan.length ? '四段录像已完成' : `录制：${activeStep.title}`, 'video', 'secondary', completedVideos >= capturePlan.length ? 'disabled' : 'disabled')}${button('pause', '暂停', '', 'secondary', 'hidden')}</div></div><div class="save-status" id="save-status">${icon('check')} <span>已保存 ${countMedia()} 份素材 · 本机持久保存</span></div><div id="pending-warning" class="notice warning" ${state.pending.length ? '' : 'hidden'}><p>有素材尚未保存，请保留此页面并重试。</p>${button('retry-save', '重试保存', 'refresh', 'secondary small-btn')}</div><div class="capture-strip" id="capture-strip">${captureStrip()}</div></section>
+    <aside class="capture-aside"><section class="panel capture-plan"><div id="capture-plan-status">${capturePlanStatus()}</div><div class="toggle-row"><div><strong>实时弹幕</strong><small>在画面中显示简短建议</small></div><label class="switch"><input type="checkbox" id="tips-toggle" checked aria-label="实时弹幕"/><span></span></label></div>${state.config.vision ? `<label class="consent"><input type="checkbox" id="remote-toggle"/>启用 Agent 图像分析（约每 10 秒发送一帧到已配置服务）</label>` : '<p class="capability-note">当前提供本地亮度检查与基础拍摄建议。视觉 Agent 尚未连接，不判断空间是否完整。</p>'}</section><section class="panel next-card"><span class="eyebrow">下一步</span><h2>拍完，再一起看一遍</h2><p>回看素材，记录需要补拍的位置，确认后再进入重建。</p>${button('finish-capture', '结束拍摄，进入复查', 'arrow', 'primary full')}<span class="small muted">结束录像后会先保存，再进入复查。</span></section></aside></div>`);
   state.camera = new CaptureCamera($('#camera-video'), {
     onState: updateCameraState,
     onCapture: async capture => { state.pending.push({ ...capture, draftId: state.draft.id, owner: state.user.id }); await uploadPending(); },
@@ -158,8 +174,10 @@ function updateCameraState(next) {
   if (next.error) { $('#camera-error').textContent = next.error; $('#camera-empty').hidden = false; if (!s.ready) $('#live-indicator').hidden = true; }
   else if (s.ready) { $('#camera-empty').hidden = true; $('#live-indicator').hidden = false; }
   $('[data-action="take-photo"]').disabled = !s.ready || s.recording || s.saving || state.uploading;
-  const record = $('[data-action="record"]'); record.disabled = !s.ready || s.saving || state.uploading;
-  record.innerHTML = `${icon(s.recording ? 'close' : 'video')}${s.recording ? '结束录像' : '开始录像'}`;
+  const record = $('[data-action="record"]');
+  const nextStep = currentCaptureStep(), allSegmentsDone = recordedVideos().length >= capturePlan.length;
+  record.disabled = !s.ready || s.saving || state.uploading || (!s.recording && allSegmentsDone);
+  record.innerHTML = `${icon(s.recording ? 'close' : 'video')}${s.recording ? `结束：${nextStep.title}` : allSegmentsDone ? '四段录像已完成' : `录制：${nextStep.title}`}`;
   $('[data-action="pause"]').hidden = !s.recording;
   $('[data-action="pause"]').textContent = s.paused ? '继续录像' : '暂停';
   $('#record-time').hidden = !s.recording;
@@ -187,14 +205,14 @@ async function uploadPending() {
       }
       state.pending.shift();
     }
-    if (state.view === 'capture') { $('#save-status').innerHTML = `${icon('check')}<span>已保存 ${countMedia()} 份素材 · 本机持久保存</span>`; $('#capture-strip').innerHTML = captureStrip(); $('#pending-warning').hidden = true; }
+    if (state.view === 'capture') { $('#save-status').innerHTML = `${icon('check')}<span>已保存 ${countMedia()} 份素材 · 本机持久保存</span>`; $('#capture-strip').innerHTML = captureStrip(); $('#capture-plan-status').innerHTML = capturePlanStatus(); $('#pending-warning').hidden = true; }
   } catch (error) {
     if (state.view === 'capture') { $('#pending-warning').hidden = false; $('#save-status').textContent = '保存未完成，请保留当前页面并重试。'; }
     throw error;
   } finally { state.uploading = false; updateCameraState({}); }
 }
 function mediaCard(m) {
-  return `<article class="media-card"><button data-action="media" data-id="${m.id}" class="media-preview" aria-label="查看${m.kind === 'photo' ? '照片' : '录像'}">${m.kind === 'photo' ? `<img src="${m.url}" loading="lazy" alt="${m.purpose === 'check' ? '独立检查近照' : m.purpose === 'video-frame' ? '录像抽帧' : '现场重建照片'}"/>` : `<span>${icon('video')}<strong>现场录像</strong><small>${Math.round(m.duration)} 秒 · ${m.mime.includes('mp4') ? 'MP4' : 'WebM'}</small></span>`}</button><div class="media-info"><span>${m.purpose === 'check' ? '检查近照' : m.purpose === 'video-frame' ? '录像抽帧' : m.kind === 'video' ? '现场录像' : '重建照片'}</span><small>${bytes(m.size)}</small></div></article>`;
+  return `<article class="media-card"><button data-action="media" data-id="${m.id}" class="media-preview" aria-label="查看${m.kind === 'photo' ? '照片' : videoStepLabel(m)}">${m.kind === 'photo' ? `<img src="${m.url}" loading="lazy" alt="${m.purpose === 'check' ? '独立检查近照' : m.purpose === 'video-frame' ? '录像抽帧' : '现场重建照片'}"/>` : `<span>${icon('video')}<strong>${h(videoStepLabel(m))}</strong><small>${Math.round(m.duration)} 秒 · ${m.mime.includes('mp4') ? 'MP4' : 'WebM'}</small></span>`}</button><div class="media-info"><span>${m.purpose === 'check' ? '检查近照' : m.purpose === 'video-frame' ? '录像抽帧' : m.kind === 'video' ? videoStepLabel(m) : '重建照片'}</span><small>${bytes(m.size)}</small></div></article>`;
 }
 function renderReview() {
   const d = state.draft, current = d.review && d.review_revision === d.revision;
@@ -209,40 +227,36 @@ const jobLabels = { SUBMITTING: '正在上传与提交', RUNNING: '平台重建�
 function resultPreview(job) {
   return `<section class="panel"><div class="section-heading"><h2>素材版本 ${job.revision} 三维预览${job.revision === state.draft.revision ? '' : '（补拍前）'}</h2><span class="badge blue">交互预览</span></div><div id="model-viewer" class="model-viewer"><div class="viewer-loading">正在准备三维预览…</div></div><p id="viewer-status" class="small muted" role="status">等待加载</p><div class="download-row">${job.result.spz ? `<a class="btn secondary" href="${h(job.result.spz)}" target="_blank" rel="noopener noreferrer">${icon('download')} 下载 SPZ</a>` : ''}${job.result.ply ? `<a class="btn secondary" href="${h(job.result.ply)}" target="_blank" rel="noopener noreferrer">${icon('download')} 下载 PLY</a>` : ''}<a class="text-button" href="https://studio.aholo3d.cn/viewer?projectId=${encodeURIComponent(job.world_id)}" target="_blank" rel="noopener noreferrer">在平台查看</a></div></section>`;
 }
+function propertySummaryPanel() {
+  const result = state.propertySummary;
+  const shared = result?.shared;
+  return `<section class="panel"><span class="eyebrow">AI 房源概览</span><h2>基于采集记录生成</h2><p class="muted small">仅发送房屋/房间名称、素材统计、复查结论、人工确认和重建状态；不发送证件、内部备注、照片或视频。</p>${state.config.summary ? `${button('generate-summary', '生成房源概览', 'scan', 'secondary full')}<p class="small muted form-hint">点击即确认将上述摘要发送至方舟模型。</p>` : '<p class="small muted">尚未配置房源摘要模型。</p>'}${result?.summary ? `<div class="review-summary"><strong>生成结果</strong><p>${h(result.summary)}</p><small>生成于 ${date(result.generatedAt)}</small></div>` : ''}${shared ? `<details class="small muted"><summary>查看本次发送的信息</summary><pre>${h(JSON.stringify(shared, null, 2))}</pre></details>` : ''}</section>`;
+}
 function renderResult() {
   const d = state.draft;
   const latest = d.jobs.find(job => job.revision === d.revision), ready = latest?.state === 'SUCCEEDED' && (latest.result?.spz || latest.result?.ply);
   shell(`${heading('03 / 空间成果', '从现场记录，到空间预览', `${h(d.property)} / ${h(d.room)} · 当前采集版本 ${d.revision}`, button('review', '返回素材复查', 'eye', 'secondary'))}
-  <div class="notice">${icon('info')}<p>三维成果需要结合独立检查近照人工对照，模糊、失真或未拍到的区域不视为真实现状。</p></div><div class="result-layout"><section>${ready ? resultPreview(latest) : `<div class="panel reconstruction-empty"><span class="result-cube">${icon('cube')}</span><h2>${latest ? (jobLabels[latest.state] || '任务状态待核对') : state.config.reconstruction ? '素材准备好了，开始空间重建' : '采集已保存，等待连接重建服务'}</h2><p>${latest ? h(latest.message || '当前版本已有重建任务，请在下方刷新原任务状态。') : state.config.reconstruction ? '将本次房间素材提交 Aholo，完成后在这里查看结果。' : '本机尚未配置 Aholo API Key。你可以继续采集、下载报告，或打开已有重建样例。'}</p>${button('create-job','提交空间重建','cube','primary',state.config.reconstruction && !latest?'':'disabled')}${!state.config.reconstruction ? button('sample','查看已有重建样例','arrow','text-button') : ''}<small>多图至少 20 张，或 MP4 录像。WebM 本版保留回看，不自动转码。</small></div>`}
+  <div class="notice">${icon('info')}<p>三维成果只加载当前房源本次上传素材生成的模型；仍需结合独立检查近照人工对照。</p></div><div class="result-layout"><section>${ready ? resultPreview(latest) : `<div class="panel reconstruction-empty"><span class="result-cube">${icon('cube')}</span><h2>${latest ? (jobLabels[latest.state] || '任务状态待核对') : state.config.reconstruction ? '素材准备好了，开始空间重建' : '采集已保存，等待连接重建服务'}</h2><p>${latest ? h(latest.message || '当前版本已有重建任务，请在下方刷新原任务状态。') : state.config.reconstruction ? '将本次房间素材提交 Aholo，完成后在这里查看结果。' : '本机尚未配置 Aholo API Key。请配置后提交当前房源的实拍素材。'}</p>${button('create-job','提交空间重建','cube','primary',state.config.reconstruction && !latest?'':'disabled')}<small>多图至少 20 张，或 MP4 录像。WebM 本版保留回看，不自动转码。</small></div>`}
   ${d.jobs.length ? `<div class="panel task-panel"><h2>重建任务</h2>${d.jobs.map(j=>`<div class="job-row"><div><strong>${jobLabels[j.state] || h(j.state)}</strong><p>素材版本 ${j.revision} · ${date(j.created)}${j.world_id ? ` · ${h(j.world_id)}` : ''}</p><small>${h(j.message)}</small></div>${button('refresh-job','刷新状态','refresh','secondary small-btn',`data-id="${j.id}"`)}</div>`).join('')}</div>` : ''}
-  <div class="panel"><h2>独立检查近照</h2><p class="muted small">选择近照放大，与三维画面对应位置人工对照；视角无法对应时请标记无法比较。</p><div class="media-grid checks-grid">${d.media.filter(m=>m.purpose==='check').map(mediaCard).join('') || '<p class="empty-inline">还没有检查近照。可返回相机单独拍摄。</p>'}</div>${button('capture', '补拍检查近照', 'camera', 'secondary')}</div></section><aside><section class="panel"><span class="eyebrow">采集摘要</span><h2>${h(d.room)}</h2><dl class="summary-list"><div><dt>所属房屋</dt><dd>${h(d.property)}</dd></div><div><dt>已保存素材</dt><dd>${countMedia()} 份</dd></div><div><dt>检查状态</dt><dd>${d.review_revision===d.revision?'当前版本已检查':'需要重新检查'}</dd></div><div><dt>人工复核</dt><dd>${d.confirmed_revision===d.revision?'已记录确认':'尚未确认'}</dd></div><div><dt>重建质量</dt><dd>待人工验收</dd></div></dl><a class="btn secondary full" href="/api/drafts/${d.id}/report" download>${icon('download')} 下载采集报告</a><p class="small muted form-hint">JSON 报告保留素材清单、版本、指导和任务状态，不包含身份证图片与内部备注。</p></section></aside></div>`);
+  <div class="panel"><h2>独立检查近照</h2><p class="muted small">选择近照放大，与三维画面对应位置人工对照；视角无法对应时请标记无法比较。</p><div class="media-grid checks-grid">${d.media.filter(m=>m.purpose==='check').map(mediaCard).join('') || '<p class="empty-inline">还没有检查近照。可返回相机单独拍摄。</p>'}</div>${button('capture', '补拍检查近照', 'camera', 'secondary')}</div></section><aside><section class="panel"><span class="eyebrow">采集摘要</span><h2>${h(d.room)}</h2><dl class="summary-list"><div><dt>所属房屋</dt><dd>${h(d.property)}</dd></div><div><dt>已保存素材</dt><dd>${countMedia()} 份</dd></div><div><dt>检查状态</dt><dd>${d.review_revision===d.revision?'当前版本已检查':'需要重新检查'}</dd></div><div><dt>人工复核</dt><dd>${d.confirmed_revision===d.revision?'已记录确认':'尚未确认'}</dd></div><div><dt>重建质量</dt><dd>待人工验收</dd></div></dl><a class="btn secondary full" href="/api/drafts/${d.id}/report" download>${icon('download')} 下载采集报告</a><p class="small muted form-hint">JSON 报告保留素材清单、版本、指导和任务状态，不包含身份证图片与内部备注。</p></section>${propertySummaryPanel()}</aside></div>`);
   if (ready) loadViewer(latest.result.spz || latest.result.ply, latest.result.upAxis);
 }
-function renderSample() {
-  const samples = state.config.samples || [];
-  const selected = samples.find(item => item.id === state.sampleId) || samples.find(item => item.available) || samples[0];
-  if (!selected) {
-    shell(`${heading('三维预览台', '走近空间，自由查看', '查看已有三维空间')}<div class="notice">本机未配置样例，请参阅使用说明并刷新页面。</div>`);
-    return;
-  }
-  state.sampleId = selected.id;
-  const modelUrl = selected.assets.spz || selected.assets.ply;
-  shell(`${heading('三维预览台', '走近空间，自由查看', `${h(selected.title)} · 通过移动、转向与缩放，查看不同位置的重建细节`)}
-  <div class="sample-picker" role="group" aria-label="选择预览样例">${samples.map(item => `<button type="button" data-action="select-sample" data-id="${h(item.id)}" aria-pressed="${item.id === selected.id}">${icon('cube')}<span><strong>${h(item.title)}</strong><small>${h(item.kind)} · ${item.available ? '可预览' : '本机未安装'}</small></span>${item.id === selected.id ? icon('check') : ''}</button>`).join('')}</div>
-  <div class="notice warning">${icon('info')}<p>${h(selected.notice)}</p></div>
-  <div class="sample-layout"><section class="panel"><div class="section-heading"><h2>${icon('cube')} ${h(selected.title)}</h2><span class="badge blue">交互预览</span></div><div id="model-viewer" class="model-viewer large"><div class="viewer-loading">${modelUrl ? '正在准备三维模型…' : '本机未找到此样例模型文件，请参阅使用说明。'}</div></div><p id="viewer-status" class="small muted" role="status"></p>
-  <div class="download-row">${['spz', 'ply'].filter(format => selected.assets[format]).map(format => `<a href="${h(selected.assets[format])}?download=1" class="btn secondary">${icon('download')} 下载 ${format.toUpperCase()}</a>`).join('')}<a class="text-button" href="${h(selected.source)}" target="_blank" rel="noopener noreferrer">在平台查看 ${icon('arrow')}</a></div></section>
-  <aside class="panel sample-details"><span class="eyebrow">${h(selected.kind)}记录</span><h2>从样例了解预览效果</h2><p>${h(selected.description)}</p><dl class="summary-list">${selected.facts.map(([label, value]) => `<div><dt>${h(label)}</dt><dd>${h(value)}</dd></div>`).join('')}</dl>${button('new','开始自己的采集','camera','primary full')}</aside></div>`);
-  if (modelUrl) loadViewer(modelUrl, selected.upAxis, selected.initialView);
+function renderImportedModel() {
+  const model = state.importedModel;
+  if (!model) return navigate('home');
+  shell(`${heading('本地模型预览', h(model.name), '仅在当前浏览器会话内读取；不会上传到 Aholo，也不会成为本次房源重建结果。', button('home', '返回我的采集', 'arrow', 'secondary'))}
+    <div class="notice">${icon('info')}<p>模型文件：<strong>${h(model.name)}</strong> · ${bytes(model.size)}。不会上传到 Aholo，也不会加入房源拍摄素材；如方向不正确，切换“上方向”后将重新加载预览。</p></div>
+    <section class="panel imported-model"><div class="section-heading"><h2>${icon('cube')} PLY 在线预览</h2><div class="model-options"><label for="model-up-axis">上方向</label><select id="model-up-axis"><option value="Y" ${model.upAxis === 'Y' ? 'selected' : ''}>Y 轴向上（室内常用）</option><option value="Z" ${model.upAxis === 'Z' ? 'selected' : ''}>Z 轴向上</option></select></div></div><div id="model-viewer" class="model-viewer"><div class="viewer-loading">正在准备本地 PLY…</div></div><p id="viewer-status" class="small muted" role="status">等待加载</p><div class="download-row"><a class="btn secondary" href="${model.url}" download="${h(model.name)}">${icon('download')} 下载原始 PLY</a>${button('clear-imported-model', '移除此预览', 'trash', 'secondary danger-text')}</div></section>`);
+  loadViewer(model.url, model.upAxis, undefined, model.name);
 }
-async function loadViewer(url, upAxis, initialView) {
+async function loadViewer(url, upAxis, initialView, fileName) {
   const generation = renderGeneration;
   viewerAbort?.abort();
   const abort = new AbortController(); viewerAbort = abort;
   try {
     const { mountViewer } = await import('./viewer.js');
     if (generation !== renderGeneration || abort.signal.aborted) return;
-    const viewer = await mountViewer($('#model-viewer'), url, { upAxis, initialView, signal: abort.signal, onStatus: message => { if (generation === renderGeneration && $('#viewer-status')) $('#viewer-status').textContent = message; } });
+    const viewer = await mountViewer($('#model-viewer'), url, { upAxis, initialView, fileName, signal: abort.signal, onStatus: message => { if (generation === renderGeneration && $('#viewer-status')) $('#viewer-status').textContent = message; } });
     if (generation !== renderGeneration) viewer.dispose(); else state.viewer = viewer;
   } catch (error) { if (!abort.signal.aborted && generation === renderGeneration && $('#model-viewer')) { $('#model-viewer').classList.remove('viewer-enhanced'); $('#model-viewer').innerHTML = `<div class="viewer-loading">${icon('cube')}<h3>当前设备未能加载模型</h3><p>${h(error.message)}</p><p>可下载模型，或通过下方链接在平台查看。</p></div>`; $('#viewer-status').textContent = '预览未完成，不代表模型通过验收。'; } }
 }
@@ -263,9 +277,10 @@ async function navigate(view, draftId) {
   closeViewer();
   if (draftId && view !== 'account') state.draft = await api(`/api/drafts/${draftId}`);
   if (['capture', 'review', 'result'].includes(view) && !state.draft) view = 'home';
+  if (view === 'model' && !state.importedModel) view = 'home';
   if (view === 'home') state.drafts = (await api('/api/drafts')).drafts;
   state.view = view; renderGeneration++;
-  ({ home: renderHome, account: renderAccount, capture: renderCapture, review: renderReview, result: renderResult, sample: renderSample })[view]();
+  ({ home: renderHome, account: renderAccount, capture: renderCapture, review: renderReview, result: renderResult, model: renderImportedModel })[view]();
   window.scrollTo(0,0);
 }
 async function updateVerification(work) {
@@ -308,19 +323,23 @@ function showMedia(id) {
   const m = state.draft?.media.find(m=>m.id === id); if (!m) throw new Error('找不到这份素材。');
   showDialog(`<h2>${m.kind==='video'?'现场录像':'现场照片'}</h2><p class="muted small">${date(m.captured)} · ${bytes(m.size)}</p><div class="media-modal">${m.kind==='video'?`<video src="${m.url}" controls playsinline></video>`:`<img src="${m.url}" alt="现场拍摄素材"/>`}</div><div class="dialog-actions"><a class="btn secondary" href="${m.url}?download=1">${icon('download')}下载原始素材</a>${button('delete-media','移除素材','trash','secondary danger-text',`data-id="${m.id}"`)}</div>`);
 }
+async function importPly(file) {
+  if (!file) throw new Error('请选择一个 PLY 文件。');
+  if (!file.name.toLowerCase().endsWith('.ply') || !file.size) throw new Error('仅支持非空的 .ply 文件。');
+  if (file.size > 2 * 1024 * 1024 * 1024) throw new Error('PLY 文件不能超过 2 GB。');
+  if (!/^ply\r?\n/.test(await file.slice(0, 64).text())) throw new Error('这不是有效的 PLY 文件头。');
+  if (state.importedModel?.url?.startsWith('blob:')) URL.revokeObjectURL(state.importedModel.url);
+  state.importedModel = { name: file.name, size: file.size, url: URL.createObjectURL(file), upAxis: 'Y' };
+  $('#dialog')?.close();
+  await navigate('model');
+}
 async function action(name, el) {
   if (name === 'close-dialog') { $('#dialog')?.close(); return; }
   if (state.id.busy) throw new Error('证件资料正在处理，请稍候。');
   if (name === 'account') return navigate('account');
   if (name === 'home') return navigate('home');
-  if (name === 'sample') return navigate('sample');
-  if (name === 'select-sample') {
-    if (state.view !== 'sample' || state.sampleId === el.dataset.id || !state.config.samples.some(item => item.id === el.dataset.id)) return;
-    state.sampleId = el.dataset.id;
-    await navigate('sample');
-    if (state.user && state.view === 'sample') $('[data-action="select-sample"][aria-pressed="true"]')?.focus();
-    return;
-  }
+  if (name === 'import-ply') { showDialog(`<span class="eyebrow">本地模型</span><h2>导入 PLY 在线预览</h2><p class="muted">文件只在当前浏览器会话中读取；不会上传至 Aholo，也不会加入房源拍摄素材。</p><form id="ply-import-form"><label for="ply-file">选择 PLY 文件</label><input id="ply-file" name="ply" type="file" accept=".ply,application/octet-stream" required/><p class="small muted">最大 2 GB。首次按 Y 轴向上加载；如模型侧躺，可在预览页切换 Z 轴向上。</p><div class="dialog-actions">${button('close-dialog', '取消', '', 'secondary')}<button class="btn primary" type="submit">开始预览 ${icon('arrow')}</button></div></form>`); return; }
+  if (name === 'clear-imported-model') { if (state.importedModel?.url?.startsWith('blob:')) URL.revokeObjectURL(state.importedModel.url); state.importedModel = null; return navigate('home'); }
   if (name === 'new') return newDialog();
   if (name === 'resume') return navigate('capture', el.dataset.id);
   if (name === 'capture') { state.target = ''; return navigate('capture'); }
@@ -334,6 +353,11 @@ async function action(name, el) {
   if (name === 'id-example') return exampleId(el.dataset.side);
   if (name === 'id-remove') return updateVerification(async () => { await resetVerification(); removeIdentity(el.dataset.side); });
   if (name === 'id-reset') return updateVerification(async () => { await resetVerification(); for (const side of Object.keys(documentLabels)) removeIdentity(side); });
+  if (name === 'id-dev-skip') return updateVerification(async () => {
+    const result = await api('/api/verification/dev-skip', { method: 'POST', data: { confirm: true } });
+    state.user = result.user;
+    for (const side of Object.keys(documentLabels)) removeIdentity(side);
+  });
   if (name === 'id-check') {
     if (!Object.keys(documentLabels).every(side => state.id[side])) throw new Error('请补齐身份证人像面、国徽面和房产证。');
     return updateVerification(async () => {
@@ -383,6 +407,11 @@ async function action(name, el) {
     if (!confirm('确认将当前重建素材上传至 Aholo 并创建极速重建任务？这会使用平台额度；同一素材版本仅提交一次。')) return;
     await api(`/api/drafts/${state.draft.id}/jobs`,{method:'POST',data:{confirmCost:true}}); return navigate('result',state.draft.id);
   }
+  if (name === 'generate-summary') {
+    const result = await api(`/api/drafts/${state.draft.id}/summary`, { method: 'POST', data: { confirmExternal: true } });
+    state.propertySummary = result;
+    return renderResult();
+  }
   if (name === 'refresh-job') { state.draft=await api(`/api/jobs/${el.dataset.id}/refresh`,{method:'POST'}); return navigate('result'); }
   if (name === 'reset-view') return state.viewer?.reset();
 }
@@ -403,6 +432,7 @@ document.addEventListener('submit', async event => {
       state.config=await api('/api/config');
       if(state.pending.length){await navigate('capture',state.pending[0].draftId); if(state.view==='capture') await uploadPending();} else await navigate('home');
     } else if(form.id==='new-form') { state.draft=await api('/api/drafts',{method:'POST',data}); $('#dialog').close(); state.target=''; await navigate('capture'); }
+    else if(form.id==='ply-import-form') { await importPly(form.querySelector('#ply-file').files[0]); }
     else if(form.id==='issue-form') { state.draft=await api(`/api/drafts/${state.draft.id}/issues`,{method:'PATCH',data:{id:form.dataset.id,status:'noted',note:data.note}}); $('#dialog').close(); renderReview(); }
   } catch(error) { if(form.id==='login-form' && $('#login-error')) $('#login-error').textContent=error.message; else await handleError(error); }
   finally { if(submit.isConnected) submit.disabled=false; }
@@ -414,8 +444,9 @@ document.addEventListener('change', event => {
   if(el.id==='tips-toggle'){state.camera.tipEnabled=el.checked;$('#danmaku').hidden=!el.checked;if(el.checked)state.camera.guide();}
   if(el.id==='remote-toggle'){state.camera.remoteEnabled=el.checked;state.camera.guide();}
   if(el.id==='media-filter'){state.mediaFilter=el.value;renderReview();}
+  if(el.id==='model-up-axis' && state.importedModel){state.importedModel.upAxis=el.value;renderImportedModel();}
 });
 window.addEventListener('beforeunload', event => { if(state.uploading||state.pending.length||state.cameraState.recording){event.preventDefault();event.returnValue='';} });
-window.addEventListener('pagehide',()=>{state.camera?.stream?.getTracks().forEach(t=>t.stop());clearIdentity();});
+window.addEventListener('pagehide',()=>{state.camera?.stream?.getTracks().forEach(t=>t.stop());clearIdentity();if(state.importedModel?.url?.startsWith('blob:')) URL.revokeObjectURL(state.importedModel.url);});
 try { const session=await api('/api/session'); state.user=session.user;state.csrf=session.csrf;state.config=await api('/api/config'); await navigate('home'); }
 catch(error){renderLogin(error.status===401?'':error.message);}

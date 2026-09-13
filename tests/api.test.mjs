@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readdir, mkdir, writeFile, unlink } from 'node:fs/promises';
+import { mkdtemp, rm, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -14,7 +14,7 @@ const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypisom0000
 
 async function fixture(t, options = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'rental-mvp-'));
-  const appOptions = { dataDir: dir, samplesRoot: join(dir, 'samples'), password, env: {}, ...options };
+  const appOptions = { dataDir: dir, password, env: {}, ...options };
   let app = createApp(appOptions);
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${app.server.address().port}`;
@@ -60,45 +60,14 @@ async function fixture(t, options = {}) {
   } };
 }
 
-test('imported samples are separate authenticated assets with ranges, downloads and a fixed catalog', async t => {
-  const { user, client, dir } = await fixture(t);
-  const meetingDir = join(dir, 'samples', '3FO4K4VCF7LG');
-  const workbenchDir = join(dir, 'samples', '3FO4K4XNH9NX');
-  const path = '/api/samples/3FO4K4VCF7LG/model.spz';
-  await mkdir(meetingDir, { recursive: true });
-  await mkdir(workbenchDir, { recursive: true });
-  await writeFile(join(meetingDir, 'meeting-room.spz'), 'meeting-room-spz');
-  await writeFile(join(meetingDir, 'meeting-room.ply'), 'meeting-room-ply');
-  await writeFile(join(workbenchDir, 'workbench.spz'), 'workbench-spz');
-  assert.equal((await client().request(path)).status, 401);
+test('no default model catalog or sample asset route is exposed', async t => {
+  const { user, client } = await fixture(t);
+  assert.equal((await client().request('/api/samples/meeting-room/model.spz')).status, 401);
   const config = (await user.request('/api/config')).value;
-  assert.equal(config.samples[0].id, '3FO4K4VCF7LG');
-  assert.equal(config.samples[0].name, 'Modern Office Meeting Room');
-  assert.equal(config.samples[0].source, 'https://studio.aholo3d.com/viewer?projectId=3FO4K4VCF7LG');
-  assert.equal(config.samples[0].assets.spz, path);
-  assert.equal(config.samples[0].available, true);
-  assert.equal(config.samples[1].assets.ply, null);
-  const range = await user.request(path, { headers: { Range: 'bytes=0-6' } });
-  assert.equal(range.status, 206);
-  assert.equal(range.value.toString(), 'meeting');
-  assert.equal(range.headers.get('content-range'), 'bytes 0-6/16');
-  const head = await user.request(path, { method: 'HEAD' });
-  assert.equal(head.status, 200); assert.equal(head.value.length, 0);
-  assert.equal(head.headers.get('content-length'), '16');
-  const download = await user.request('/api/samples/3FO4K4VCF7LG/model.ply?download=1');
-  assert.equal(download.value.toString(), 'meeting-room-ply');
-  assert.match(download.headers.get('content-disposition'), /meeting-room\.ply/);
-  assert.equal((await user.request('/api/sample/model.spz')).value.toString(), 'workbench-spz');
-  assert.equal((await user.request(path, { headers: { Range: 'bytes=999-1000' } })).status, 416);
-  for (const invalid of ['/api/samples/unknown/model.spz', '/api/samples/%2e%2e%2f/model.spz', '/api/samples/3FO4K4VCF7LG/model.env', '/api/samples/3FO4K4XNH9NX/model.ply']) {
-    assert.equal((await user.request(invalid)).status, 404);
-  }
-  await unlink(join(meetingDir, 'meeting-room.spz'));
-  await unlink(join(meetingDir, 'meeting-room.ply'));
-  assert.equal((await user.request(path)).status, 404);
-  assert.equal((await user.request('/api/config')).value.samples[0].available, false);
-  assert.deepEqual((await user.request('/api/drafts')).value.drafts, []);
-  assert.equal((await user.request('/api/drafts', { method: 'POST', data: { property: 'a', room: 'b' } })).status, 403);
+  assert.equal('samples' in config, false);
+  assert.equal('sample' in config, false);
+  assert.equal((await user.request('/api/samples/meeting-room/model.spz')).status, 404);
+  assert.equal((await user.request('/api/sample/model.spz')).status, 404);
 });
 
 test('session is server-validated; CSRF, origin, logout and expiry are enforced', async t => {
@@ -131,6 +100,46 @@ test('account verification requires both ID sides and a property certificate, ne
   assert.equal(verified.value.user.verification.mode, 'mock');
   assert.deepEqual(verified.value.user.verification.documents, { front: true, back: true, property: true });
   assert.deepEqual(await readdir(join(dir, 'media')), []);
+});
+
+test('local development can explicitly skip certificate verification without accepting certificate data', async t => {
+  const { user } = await fixture(t);
+  const config = await user.request('/api/config');
+  assert.equal(config.value.identityBypass, true);
+  assert.equal((await user.request('/api/verification/dev-skip', { method: 'POST', data: {} })).status, 400);
+  assert.equal((await user.request('/api/verification/dev-skip', { method: 'POST', data: { confirm: true, document: 'private' } })).status, 400);
+  const skipped = await user.request('/api/verification/dev-skip', { method: 'POST', data: { confirm: true } });
+  assert.equal(skipped.status, 200);
+  assert.equal(skipped.value.user.verification.status, 'passed');
+  assert.equal(skipped.value.user.verification.result, 'dev-skip');
+  assert.deepEqual(skipped.value.user.verification.documents, { front: true, back: true, property: true });
+  assert.equal((await user.request('/api/drafts', { method: 'POST', data: { property: '开发测试房', room: '客厅' } })).status, 201);
+});
+
+test('production configuration does not expose the development verification skip', async t => {
+  const { user } = await fixture(t, { env: { NODE_ENV: 'production' } });
+  assert.equal((await user.request('/api/config')).value.identityBypass, false);
+  assert.equal((await user.request('/api/verification/dev-skip', { method: 'POST', data: { confirm: true } })).status, 404);
+  assert.equal((await user.request('/api/drafts', { method: 'POST', data: { property: 'a', room: 'b' } })).status, 403);
+});
+
+test('property summary sends only a minimal collection summary to the configured provider', async t => {
+  let received;
+  const providers = {
+    visionEnabled: false, reconstructionEnabled: false, summaryEnabled: true,
+    summaryInput(draft) { return { property: draft.property, room: draft.room, media: { reconstructionPhotos: draft.media.length }, review: null, manualConfirmed: false, reconstruction: { state: 'not_submitted' } }; },
+    async summarize(input) { received = input; return '客厅已采集 1 张重建照片，尚待人工复查。'; },
+    async review(draft) { return basicReview(draft); },
+  };
+  const { user } = await fixture(t, { providers });
+  const draft = await user.draft();
+  await user.upload(draft.id);
+  assert.equal((await user.request(`/api/drafts/${draft.id}/summary`, { method: 'POST', data: {} })).status, 400);
+  const result = await user.request(`/api/drafts/${draft.id}/summary`, { method: 'POST', data: { confirmExternal: true } });
+  assert.equal(result.status, 200);
+  assert.equal(result.value.summary, '客厅已采集 1 张重建照片，尚待人工复查。');
+  assert.deepEqual(result.value.shared, received);
+  assert.equal(Object.hasOwn(result.value.shared, 'notes'), false);
 });
 
 test('failed or reset verification blocks every main workflow mutation while retaining saved records', async t => {
@@ -269,7 +278,8 @@ test('same-version paid submission is never repeated, including ambiguous create
   let calls = 0;
   const providers = { visionEnabled: false, reconstructionEnabled: true, review: basicReview, async reconstruct(_d, _p, creating) { calls++; creating(); throw new Error('connection lost'); } };
   const { user, app } = await fixture(t, { providers });
-  const draft = await user.draft(); await user.upload(draft.id, { bytes: mp4, mime: 'video/mp4' });
+  const draft = await user.draft();
+  for (let index = 0; index < 4; index++) await user.upload(draft.id, { bytes: mp4, mime: 'video/mp4' });
   await user.request(`/api/drafts/${draft.id}/review`, { method: 'POST', data: {} });
   await user.request(`/api/drafts/${draft.id}/confirm`, { method: 'POST', data: { manual: true } });
   assert.equal((await user.request(`/api/drafts/${draft.id}/jobs`, { method: 'POST', data: { confirmCost: false } })).status, 400);
@@ -282,6 +292,7 @@ test('platform success without a model is not a successful preview', async t => 
   const providers = { visionEnabled: false, reconstructionEnabled: true, review: basicReview, async reconstruct(_d, _p, creating) { creating(); return 'test-world'; }, async status() { return { status: 'SUCCEEDED', spz: null, ply: null }; } };
   const { user } = await fixture(t, { providers }), draft = await user.draft();
   const media = await user.upload(draft.id, { bytes: mp4, mime: 'video/mp4' });
+  for (let index = 1; index < 4; index++) await user.upload(draft.id, { bytes: mp4, mime: 'video/mp4' });
   await user.request(`/api/drafts/${draft.id}/review`, { method: 'POST', data: {} });
   await user.request(`/api/drafts/${draft.id}/confirm`, { method: 'POST', data: { manual: true } });
   const job = await user.request(`/api/drafts/${draft.id}/jobs`, { method: 'POST', data: { confirmCost: true } });
@@ -297,6 +308,9 @@ test('selection excludes independent checks and video frames; WebM is not rename
   assert.throws(() => reconstructionInput([check, frame, webm]), /20/);
   const photos = Array.from({ length: 20 }, (_, i) => ({ id: String(i), kind: 'photo', purpose: 'reconstruction' }));
   assert.deepEqual(reconstructionInput([...photos, check, frame, webm]), photos);
+  const mp4Video = { id: 'one-video', kind: 'video', mime: 'video/mp4' };
+  assert.throws(() => reconstructionInput([mp4Video]), /4 段 MP4/);
+  assert.deepEqual(reconstructionInput(Array.from({ length: 4 }, (_, i) => ({ id: `video-${i}`, kind: 'video', mime: 'video/mp4' }))), Array.from({ length: 4 }, (_, i) => ({ id: `video-${i}`, kind: 'video', mime: 'video/mp4' })));
 });
 
 test('saved originals, review and sessions survive a complete server restart', async t => {

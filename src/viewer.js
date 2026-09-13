@@ -4,7 +4,7 @@ import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
 import { createNavigation } from './viewer-navigation.js';
 import { viewerMarkup, bindViewerControls } from './viewer-controls.js';
 
-export async function mountViewer(element, url, { upAxis = 'Z', initialView, onStatus = () => {}, signal } = {}) {
+export async function mountViewer(element, url, { upAxis = 'Z', initialView, fileName, onStatus = () => {}, signal } = {}) {
   let renderer, controls, splat, spark, observer, interaction, disposed = false;
   const abort = new AbortController();
   const scene = new THREE.Scene();
@@ -42,7 +42,7 @@ export async function mountViewer(element, url, { upAxis = 'Z', initialView, onS
     if (!response.ok) throw new Error(`模型读取失败（${response.status}）。`);
     const bytes = await response.arrayBuffer();
     if (disposed) throw new DOMException('预览已取消', 'AbortError');
-    splat = new SplatMesh({ fileBytes: bytes, fileName: url.includes('.ply') ? 'room.ply' : 'room.spz' });
+    splat = new SplatMesh({ fileBytes: bytes, fileName: fileName || (url.includes('.ply') ? 'room.ply' : 'room.spz') });
     await splat.initialized;
     if (disposed) { splat.dispose(); throw new DOMException('预览已取消', 'AbortError'); }
     if (upAxis === 'Z') splat.rotation.x = -Math.PI / 2;

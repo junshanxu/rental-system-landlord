@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { openStore, passwordMatches, passwordHash, tokenHash } from './store.mjs';
 import { createProviders, reconstructionInput } from './providers.mjs';
-import { createSampleCatalog } from './samples.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_MEDIA = 50 * 1024 * 1024;
@@ -71,10 +70,13 @@ function validMagic(bytes, mime) {
 
 export function createApp(options = {}) {
   const env = options.env || process.env;
+  // This is deliberately local-development only. A deployment with a public origin
+  // or NODE_ENV=production must use the normal three-document Mock flow instead.
+  const identityBypassEnabled = env.DEV_IDENTITY_BYPASS === '1' ||
+    (!env.PUBLIC_ORIGIN && env.NODE_ENV !== 'production' && env.DEV_IDENTITY_BYPASS !== '0');
   const store = openStore(options.dataDir || join(root, '.data'), options);
   const { db } = store;
   const providers = options.providers || createProviders(env);
-  const samples = createSampleCatalog(options.samplesRoot || join(root, 'outputs', 'aholo'), options.sampleDir);
   const dist = join(root, 'dist');
   const loginAttempts = new Map();
   const liveRequests = new Map();
@@ -154,7 +156,7 @@ export function createApp(options = {}) {
       const { user, session } = auth(req);
       if (path === '/api/session' && method === 'GET') return send(res, { user: store.publicUser(user), csrf: session.csrf });
       if (path === '/api/logout' && method === 'POST') { db.prepare('DELETE FROM sessions WHERE token=?').run(session.token); res.setHeader('Set-Cookie', cookie('', true)); return send(res, { ok: true }); }
-      if (path === '/api/config' && method === 'GET') return send(res, { vision: providers.visionEnabled, reconstruction: providers.reconstructionEnabled, sample: Boolean(samples.asset('3FO4K4XNH9NX', 'spz')), samples: samples.list(), maxMediaBytes: MAX_MEDIA, maxSeconds: 60 });
+      if (path === '/api/config' && method === 'GET') return send(res, { vision: providers.visionEnabled, reconstruction: providers.reconstructionEnabled, summary: providers.summaryEnabled, identityBypass: identityBypassEnabled, maxMediaBytes: MAX_MEDIA, maxSeconds: 60 });
       if (path === '/api/identity-mock' && method === 'POST') {
         fail(410, '身份检查已迁移至用户中心，请完成身份证与房产证核验。');
       }
@@ -177,6 +179,15 @@ export function createApp(options = {}) {
           ON CONFLICT(user_id) DO UPDATE SET status=excluded.status,front=1,back=1,property=1,result=excluded.result,checked_at=excluded.checked_at,revision=excluded.revision`).run(user.id, status, data.result, Date.now(), data.revision + 1);
         return send(res, { user: store.publicUser(user) });
       }
+      if (path === '/api/verification/dev-skip' && method === 'POST') {
+        if (!identityBypassEnabled) fail(404, '开发跳过仅在本机开发环境可用。');
+        const data = await jsonBody(req);
+        if (data.confirm !== true || Object.keys(data).some(key => key !== 'confirm')) fail(400, '请确认本次仅用于本地开发体验。');
+        const current = store.verification(user.id);
+        db.prepare(`INSERT INTO user_verifications(user_id,status,front,back,property,result,checked_at,revision) VALUES (?, 'passed', 1, 1, 1, 'dev-skip', ?, ?)
+          ON CONFLICT(user_id) DO UPDATE SET status='passed',front=1,back=1,property=1,result='dev-skip',checked_at=excluded.checked_at,revision=excluded.revision`).run(user.id, Date.now(), current.revision + 1);
+        return send(res, { user: store.publicUser(user) });
+      }
       // Main workflow writes share one gate, including direct requests from a stale tab.
       if (!['GET', 'HEAD'].includes(method)) {
         const revision = requireVerified(user);
@@ -189,7 +200,7 @@ export function createApp(options = {}) {
         db.prepare('INSERT INTO drafts (id,user_id,property,room,created,updated) VALUES (?,?,?,?,?,?)').run(id, user.id, text(data.property, 80, true), text(data.room, 40, true), now, now);
         return send(res, store.draft(id, user.id), 201);
       }
-      const draftMatch = /^\/api\/drafts\/([a-f0-9-]+)(?:\/(media|review|confirm|report|jobs|issues))?$/.exec(path);
+      const draftMatch = /^\/api\/drafts\/([a-f0-9-]+)(?:\/(media|review|confirm|report|jobs|issues|summary))?$/.exec(path);
       if (draftMatch) {
         const [, id, action] = draftMatch;
         let draft = ownDraft(id, user);
@@ -276,6 +287,15 @@ export function createApp(options = {}) {
           res.setHeader('Content-Disposition', `attachment; filename="capture-${id}.json"`);
           return send(res, { property: draft.property, room: draft.room, revision: draft.revision, capturedAt: draft.created, review: draft.review, reviewIsCurrent: draft.review_revision === draft.revision, manualConfirmed: draft.confirmed_revision === draft.revision, reconstructionAccepted: false, media: draft.media.map(({ id, kind, purpose, captured, mime, size, parent_id }) => ({ id, kind, purpose, captured, mime, size, parent_id })), jobs: draft.jobs });
         }
+        if (action === 'summary' && method === 'POST') {
+          const data = await jsonBody(req);
+          if (data.confirmExternal !== true || Object.keys(data).some(key => key !== 'confirmExternal')) fail(400, '请确认仅发送房源采集摘要至方舟模型。');
+          draft = ownDraft(id, user);
+          const shared = providers.summaryInput(draft);
+          const summary = await providers.summarize(shared);
+          req.verifyAccess();
+          return send(res, { summary, shared, generatedAt: Date.now() });
+        }
         if (action === 'jobs' && method === 'POST') {
           const data = await jsonBody(req);
           draft = ownDraft(id, user);
@@ -331,13 +351,6 @@ export function createApp(options = {}) {
           db.prepare('UPDATE jobs SET state=?,result=?,updated=?,message=? WHERE id=?').run(state, JSON.stringify(result), Date.now(), state === 'SUCCEEDED' ? '重建完成，仍需实拍对照与人工验收。' : state === 'ASSET_MISSING' ? '平台完成但尚无可用模型。' : '已更新平台状态。', job.id);
         } else if (method !== 'GET' && !(method === 'POST' && jobMatch[2] === 'refresh')) fail(405, '不支持的操作。');
         return send(res, ownDraft(job.draft_id, user));
-      }
-      const sampleMatch = /^\/api\/samples\/([A-Z0-9]+)\/model\.(spz|ply)$/.exec(path);
-      const legacySampleMatch = /^\/api\/sample\/model\.(spz|ply)$/.exec(path);
-      if ((sampleMatch || legacySampleMatch) && ['GET', 'HEAD'].includes(method)) {
-        const asset = samples.asset(sampleMatch ? sampleMatch[1] : '3FO4K4XNH9NX', sampleMatch ? sampleMatch[2] : legacySampleMatch[1]);
-        if (!asset) fail(404, '本机未找到此样例模型文件，请参阅使用说明。');
-        return streamFile(req, res, asset.path, 'application/octet-stream', url.searchParams.has('download') ? asset.name : null);
       }
       fail(404, '接口不存在。');
     }

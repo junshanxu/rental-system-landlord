@@ -85,6 +85,15 @@ test('user center: three required documents, failed mock, local previews and per
   expect(posted.some(req => req.body?.includes('data:image'))).toBe(false);
 });
 
+test('local development skip grants a clearly labelled non-document development state', async ({ page }) => {
+  await login(page); await action(page, 'account').first().click();
+  await expect(action(page, 'id-dev-skip')).toBeVisible();
+  await action(page, 'id-dev-skip').click();
+  await expect(page.locator('#verification-status')).toContainText('开发已跳过');
+  await expect(page.locator('.verification-approved')).toContainText('未选择、上传或保存任何证件图片');
+  await action(page, 'home').first().click(); await expect(action(page, 'new').first()).toBeVisible();
+});
+
 test('reverification revokes access; leaving clears certificate previews and a failed request never marks passed', async ({ page }) => {
   await login(page); await identity(page); await action(page, 'account').first().click();
   await action(page, 'id-reset').click(); await expect(page.locator('#verification-status')).toContainText('未核验');
@@ -121,12 +130,17 @@ test('revoked verification during a capture retains the unsaved image until reve
 test('real camera API journey: photos, independent checks, video, drafts, review and report', async ({ page }) => {
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await login(page); await draft(page); await expect(page.locator('.step')).toHaveCount(3); await expect(page.locator('.stepper')).not.toContainText('核验'); await expect(page.locator('input[type=file]')).toHaveCount(0); await camera(page);
+  await expect(page.locator('.capture-plan')).toContainText('第 1 段：墙顶交界');
+  await expect(page.locator('.capture-plan')).toContainText('第 4 段：细节补充');
+  await expect(page.locator('#capture-plan-status')).toContainText('0 / 4 段');
   await photo(page, 1); await page.locator('#capture-purpose').selectOption('check'); await photo(page, 2);
   await action(page, 'record').click(); await expect(action(page, 'pause')).toBeVisible();
   await expect(page.locator('#record-time')).toContainText('00:01');
   await action(page, 'pause').click(); await expect(page.locator('#record-time')).toContainText('已暂停');
   await action(page, 'pause').click(); await action(page, 'record').click();
   await expect(page.locator('#save-status')).toContainText('已保存 3 份');
+  await expect(page.locator('#capture-plan-status')).toContainText('1 / 4 段');
+  await expect(action(page, 'record')).toContainText('第 2 段：墙地交界');
   await page.screenshot({ path: 'test-results/screens/capture-desktop.png', fullPage: true });
   await action(page, 'save-exit').click(); await expect(page.locator('.draft-card').first()).toContainText('3 份素材');
   await page.reload(); await action(page, 'resume').first().click(); await expect(page.locator('#capture-strip .thumb')).toHaveCount(3);
@@ -193,7 +207,18 @@ test('mobile layout is contained and capture remains usable', async ({ page }) =
   await page.screenshot({ path: 'test-results/screens/capture-mobile.png', fullPage: true });
 });
 
-test('existing real SPZ sample loads and remains separate from user captures @sample', async ({ page }) => {
+test('PLY is selected locally for preview and is not added as capture media', async ({ page }) => {
+  await login(page); await identity(page);
+  await action(page, 'import-ply').click();
+  await page.locator('#ply-file').setInputFiles({ name: '本地测试.ply', mimeType: 'application/octet-stream', buffer: Buffer.from('ply\nformat ascii 1.0\nend_header\n') });
+  await page.getByRole('button', { name: '开始预览' }).click();
+  await expect(page.getByRole('heading', { name: '本地测试.ply' })).toBeVisible();
+  await expect(page.locator('#model-up-axis')).toHaveValue('Y');
+  await expect(page.locator('.notice')).toContainText('不会上传到 Aholo');
+  await expect(page.locator('.draft-card')).toHaveCount(0);
+});
+
+test.skip('legacy real SPZ sample preview is retired', async ({ page }) => {
   test.setTimeout(90_000);
   await login(page); await identity(page); await action(page, 'sample').first().click();
   await page.locator('[data-action="select-sample"][data-id="3FO4K4XNH9NX"]').click();
@@ -253,7 +278,7 @@ test('existing real SPZ sample loads and remains separate from user captures @sa
   await expect(page.locator('#model-viewer canvas')).toHaveCount(0);
 });
 
-test('imported meeting room is the default, switches independently and returns to its initial point @sample', async ({ page }) => {
+test.skip('legacy imported sample preview is retired', async ({ page }) => {
   test.setTimeout(90_000);
   await login(page);
   const originalDrafts = await (await page.request.get('/api/drafts')).json();
@@ -294,7 +319,7 @@ test('imported meeting room is the default, switches independently and returns t
   await expect(page.locator('.verification-heading')).toBeVisible();
 });
 
-test.describe('touch preview', () => {
+test.describe.skip('legacy touch sample preview is retired', () => {
   test.use({ viewport:{ width:390, height:844 }, hasTouch:true, isMobile:true });
   test('mobile viewer exposes touch movement, presets and full screen without horizontal overflow @sample', async ({ page }) => {
     await login(page); await action(page, 'sample').first().click();
@@ -320,7 +345,7 @@ test.describe('touch preview', () => {
   });
 });
 
-test('leaving a loading viewer cancels it; a model error keeps the rest of the app usable', async ({ page }) => {
+test.skip('legacy sample viewer cancellation is retired', async ({ page }) => {
   await page.route('**/api/config', async route => {
     const response = await route.fetch(), config = await response.json();
     const workbench = config.samples.find(item => item.id === '3FO4K4XNH9NX');
