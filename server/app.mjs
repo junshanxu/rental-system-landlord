@@ -7,6 +7,8 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import { openStore, passwordMatches, passwordHash, tokenHash } from './store.mjs';
 import { createProviders, reconstructionInput } from './providers.mjs';
 import { createSampleCatalog } from './samples.mjs';
+import { createSampleImports, MAX_MODEL_BYTES, parseProjectLink } from './sample-imports.mjs';
+import { createSampleSettings } from './sample-settings.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MAX_MEDIA = 50 * 1024 * 1024;
@@ -75,6 +77,9 @@ export function createApp(options = {}) {
   const { db } = store;
   const providers = options.providers || createProviders(env);
   const samples = createSampleCatalog(options.samplesRoot || join(root, 'outputs', 'aholo'), options.sampleDir);
+  const imports = createSampleImports(store, { fetchImpl: options.importFetch });
+  const sampleSettings = createSampleSettings(store);
+  const ownSamples = userId => [...imports.list(userId), ...samples.list()];
   const dist = join(root, 'dist');
   const loginAttempts = new Map();
   const liveRequests = new Map();
@@ -154,7 +159,37 @@ export function createApp(options = {}) {
       const { user, session } = auth(req);
       if (path === '/api/session' && method === 'GET') return send(res, { user: store.publicUser(user), csrf: session.csrf });
       if (path === '/api/logout' && method === 'POST') { db.prepare('DELETE FROM sessions WHERE token=?').run(session.token); res.setHeader('Set-Cookie', cookie('', true)); return send(res, { ok: true }); }
-      if (path === '/api/config' && method === 'GET') return send(res, { vision: providers.visionEnabled, reconstruction: providers.reconstructionEnabled, sample: Boolean(samples.asset('3FO4K4XNH9NX', 'spz')), samples: samples.list(), maxMediaBytes: MAX_MEDIA, maxSeconds: 60 });
+      if (path === '/api/config' && method === 'GET') return send(res, { vision: providers.visionEnabled, reconstruction: providers.reconstructionEnabled, sample: Boolean(samples.asset('3FO4K4XNH9NX', 'spz')), samples: ownSamples(user.id).map(sample => sampleSettings.apply(sample, user.id)), maxModelBytes: MAX_MODEL_BYTES, maxMediaBytes: MAX_MEDIA, maxSeconds: 60 });
+      const sampleSettingsMatch = /^\/api\/samples\/([A-Z0-9]+)\/settings$/.exec(path);
+      if (sampleSettingsMatch && method === 'PATCH') {
+        const data = await jsonBody(req);
+        auth(req);
+        const sample = ownSamples(user.id).find(item => item.id === sampleSettingsMatch[1]);
+        if (!sample) fail(404, '找不到此案例。');
+        return send(res, { sample:sampleSettings.update(sample, user.id, data) });
+      }
+      if (['/api/samples/import-link', '/api/samples/import-file'].includes(path) && method === 'POST') {
+        const abort = new AbortController(), signal = AbortSignal.any([abort.signal, AbortSignal.timeout(110000)]);
+        const disconnect = () => { if (!res.writableEnded) abort.abort(); };
+        res.once('close', disconnect);
+        const context = { signal, authorize: () => auth(req) };
+        try {
+          let result;
+          if (path.endsWith('import-link')) {
+            const data = await jsonBody(req), project = parseProjectLink(data.url);
+            const builtin = samples.list().find(item => item.id === project.projectId && item.available);
+            result = builtin ? { sample:builtin, duplicate:true } : await imports.fromLink(user.id, data, context);
+          } else {
+            if (req.headers['content-type'] !== 'application/octet-stream') fail(415, '请以模型文件格式上传。');
+            if (Number(req.headers['content-length']) > MAX_MODEL_BYTES) fail(413, '单个模型不能超过 150 MB。');
+            let data;
+            try { data = JSON.parse(decodeURIComponent(req.headers['x-model-meta'] || '')); } catch { fail(400, '模型信息无效。'); }
+            if (!data || typeof data !== 'object' || Array.isArray(data)) fail(400, '模型信息无效。');
+            result = await imports.fromFile(user.id, data, req, context);
+          }
+          auth(req); return send(res, { ...result, sample:sampleSettings.apply(result.sample, user.id) }, result.duplicate ? 200 : 201);
+        } finally { res.removeListener('close', disconnect); }
+      }
       if (path === '/api/identity-mock' && method === 'POST') {
         fail(410, '身份检查已迁移至用户中心，请完成身份证与房产证核验。');
       }
@@ -335,7 +370,8 @@ export function createApp(options = {}) {
       const sampleMatch = /^\/api\/samples\/([A-Z0-9]+)\/model\.(spz|ply)$/.exec(path);
       const legacySampleMatch = /^\/api\/sample\/model\.(spz|ply)$/.exec(path);
       if ((sampleMatch || legacySampleMatch) && ['GET', 'HEAD'].includes(method)) {
-        const asset = samples.asset(sampleMatch ? sampleMatch[1] : '3FO4K4XNH9NX', sampleMatch ? sampleMatch[2] : legacySampleMatch[1]);
+        const id = sampleMatch ? sampleMatch[1] : '3FO4K4XNH9NX', format = sampleMatch ? sampleMatch[2] : legacySampleMatch[1];
+        const asset = samples.asset(id, format) || imports.asset(id, format, user.id);
         if (!asset) fail(404, '本机未找到此样例模型文件，请参阅使用说明。');
         return streamFile(req, res, asset.path, 'application/octet-stream', url.searchParams.has('download') ? asset.name : null);
       }

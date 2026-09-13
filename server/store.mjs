@@ -56,6 +56,18 @@ export function openStore(directory, options = {}) {
     );
     CREATE INDEX IF NOT EXISTS drafts_owner ON drafts(user_id);
     CREATE INDEX IF NOT EXISTS media_draft ON media(draft_id);
+    CREATE TABLE IF NOT EXISTS sample_imports (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+      source_key TEXT NOT NULL, format TEXT NOT NULL CHECK(format IN ('spz','ply')),
+      metadata TEXT NOT NULL, created INTEGER NOT NULL,
+      UNIQUE(user_id, source_key)
+    );
+    CREATE TABLE IF NOT EXISTS sample_settings (
+      user_id TEXT NOT NULL REFERENCES users(id), sample_id TEXT NOT NULL,
+      title TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+      up_axis TEXT NOT NULL CHECK(up_axis IN ('Z','Y')), revision INTEGER NOT NULL,
+      PRIMARY KEY(user_id, sample_id)
+    );
   `);
   if (!db.prepare('SELECT id FROM users LIMIT 1').get()) {
     const username = options.username || 'landlord';
