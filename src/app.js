@@ -1,5 +1,6 @@
 import './style.css';
 import { CaptureCamera } from './camera.js';
+import { openSampleImport } from './sample-import.js';
 
 const $ = selector => document.querySelector(selector);
 const h = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -23,6 +24,7 @@ const paths = {
   eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
   video: '<rect x="3" y="5" width="13" height="14" rx="2"/><path d="m16 10 5-3v10l-5-3"/>',
   trash: '<path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/>',
+  edit: '<path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15v5ZM13 20h8"/>',
 };
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.info}</svg>`;
 const button = (action, label, name = '', cls = 'secondary', extra = '') => `<button class="btn ${cls}" data-action="${action}" ${extra}>${name ? icon(name) : ''}${label}</button>`;
@@ -43,12 +45,12 @@ function verificationBadge() {
 async function refreshAccount() { const session = await api('/api/session'); state.user = session.user; state.csrf = session.csrf; }
 let toastTimer, renderGeneration = 0;
 function toast(message) { const el = $('#toast'); el.textContent = message; el.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, 5500); }
-async function api(path, { method = 'GET', data, blob, meta } = {}) {
+async function api(path, { method = 'GET', data, blob, meta, signal } = {}) {
   const headers = {};
   if (method !== 'GET') headers['X-CSRF-Token'] = state.csrf;
   if (data !== undefined) headers['Content-Type'] = 'application/json';
   if (blob) { headers['Content-Type'] = blob.type; headers['X-Capture-Meta'] = encodeURIComponent(JSON.stringify(meta)); }
-  const res = await fetch(path, { method, headers, body: blob || (data === undefined ? undefined : JSON.stringify(data)), credentials: 'same-origin' });
+  const res = await fetch(path, { method, headers, body: blob || (data === undefined ? undefined : JSON.stringify(data)), credentials: 'same-origin', signal });
   let result;
   try { result = await res.json(); } catch { throw new Error('本机服务响应异常，请保留页面并重试。'); }
   if (!res.ok) throw Object.assign(new Error(result.error || '操作未完成。'), { status: res.status, code: result.code });
@@ -66,6 +68,8 @@ async function handleError(error) {
   }
   toast(error.message || '操作未完成，请重试。');
   if (error.status === 401 && state.user) {
+    state.sampleImport?.close();
+    $('#dialog')?.close();
     if (state.camera) { state.camera.remoteEnabled = false; try { await state.camera.close(); } catch { /* Pending captures are retained for re-login. */ } state.camera = null; }
     state.user = null; clearIdentity(); renderLogin('登录已过期。已保存草稿仍然保留，请重新登录。');
   }
@@ -131,7 +135,7 @@ async function newDialog() {
   if (!isVerified()) return navigate('account');
   showDialog(`<span class="eyebrow">新建采集</span><h2>这次要记录哪个房间？</h2><p class="muted">每次采集对应一个房间，便于补拍和三维预览。</p><form id="new-form"><label for="property">房屋名称</label><input id="property" name="property" maxlength="80" placeholder="例如：湖畔公寓 2 栋 301" required/><label for="room">房间名称</label><input id="room" name="room" maxlength="40" placeholder="例如：客厅" required/><p class="small muted form-hint">仅用于区分本次记录，可使用你熟悉的名称。</p><div class="dialog-actions">${button('close-dialog', '取消', '', 'secondary')}<button class="btn primary" type="submit">创建并开始 ${icon('arrow')}</button></div></form>`);
 }
-function showDialog(content) { $('#dialog')?.remove(); const dialog = document.createElement('dialog'); dialog.id = 'dialog'; dialog.innerHTML = `${button('close-dialog', '', 'close', 'dialog-close icon-button', 'aria-label="关闭弹窗"')}${content}`; document.body.append(dialog); dialog.addEventListener('close', () => dialog.remove()); dialog.showModal(); }
+function showDialog(content) { $('#dialog')?.remove(); const dialog = document.createElement('dialog'); dialog.id = 'dialog'; dialog.innerHTML = `${button('close-dialog', '', 'close', 'dialog-close icon-button', 'aria-label="关闭弹窗"')}${content}`; document.body.append(dialog); dialog.addEventListener('close', () => dialog.remove()); dialog.showModal(); return dialog; }
 function countMedia() { return state.draft.media.filter(m=>m.purpose !== 'video-frame').length; }
 function captureStrip() {
   return state.draft.media.filter(m=>m.purpose !== 'video-frame').slice(-8).reverse().map(m=>`<button class="thumb" data-action="media" data-id="${m.id}" aria-label="查看${m.kind === 'photo' ? '照片' : '录像'}">${m.kind === 'photo' ? `<img src="${m.url}" alt="已拍照片"/>` : `<span>${icon('video')} ${Math.round(m.duration)}s</span>`}${m.purpose === 'check' ? '<small>检查</small>' : ''}</button>`).join('');
@@ -220,19 +224,20 @@ function renderResult() {
 }
 function renderSample() {
   const samples = state.config.samples || [];
+  const importAction = button('import-sample', '导入案例', 'plus', 'primary');
   const selected = samples.find(item => item.id === state.sampleId) || samples.find(item => item.available) || samples[0];
   if (!selected) {
-    shell(`${heading('三维预览台', '走近空间，自由查看', '查看已有三维空间')}<div class="notice">本机未配置样例，请参阅使用说明并刷新页面。</div>`);
+    shell(`${heading('三维预览台', '走近空间，自由查看', '查看已有三维空间', importAction)}<div class="notice">还没有案例，导入项目链接或本地模型开始预览。</div>`);
     return;
   }
   state.sampleId = selected.id;
   const modelUrl = selected.assets.spz || selected.assets.ply;
-  shell(`${heading('三维预览台', '走近空间，自由查看', `${h(selected.title)} · 通过移动、转向与缩放，查看不同位置的重建细节`)}
+  shell(`${heading('三维预览台', '走近空间，自由查看', `${h(selected.title)} · 通过移动、转向与缩放，查看不同位置的重建细节`, importAction)}
   <div class="sample-picker" role="group" aria-label="选择预览样例">${samples.map(item => `<button type="button" data-action="select-sample" data-id="${h(item.id)}" aria-pressed="${item.id === selected.id}">${icon('cube')}<span><strong>${h(item.title)}</strong><small>${h(item.kind)} · ${item.available ? '可预览' : '本机未安装'}</small></span>${item.id === selected.id ? icon('check') : ''}</button>`).join('')}</div>
   <div class="notice warning">${icon('info')}<p>${h(selected.notice)}</p></div>
-  <div class="sample-layout"><section class="panel"><div class="section-heading"><h2>${icon('cube')} ${h(selected.title)}</h2><span class="badge blue">交互预览</span></div><div id="model-viewer" class="model-viewer large"><div class="viewer-loading">${modelUrl ? '正在准备三维模型…' : '本机未找到此样例模型文件，请参阅使用说明。'}</div></div><p id="viewer-status" class="small muted" role="status"></p>
-  <div class="download-row">${['spz', 'ply'].filter(format => selected.assets[format]).map(format => `<a href="${h(selected.assets[format])}?download=1" class="btn secondary">${icon('download')} 下载 ${format.toUpperCase()}</a>`).join('')}<a class="text-button" href="${h(selected.source)}" target="_blank" rel="noopener noreferrer">在平台查看 ${icon('arrow')}</a></div></section>
-  <aside class="panel sample-details"><span class="eyebrow">${h(selected.kind)}记录</span><h2>从样例了解预览效果</h2><p>${h(selected.description)}</p><dl class="summary-list">${selected.facts.map(([label, value]) => `<div><dt>${h(label)}</dt><dd>${h(value)}</dd></div>`).join('')}</dl>${button('new','开始自己的采集','camera','primary full')}</aside></div>`);
+  <div class="sample-layout"><section class="panel"><div class="section-heading"><h2>${icon('cube')} ${h(selected.title)}</h2><div class="sample-panel-actions"><span class="badge blue">交互预览</span>${button('edit-sample', '编辑信息', 'edit', 'secondary small-btn', `data-id="${h(selected.id)}"`)}</div></div><div id="model-viewer" class="model-viewer large"><div class="viewer-loading">${modelUrl ? '正在准备三维模型…' : '本机未找到此样例模型文件，请参阅使用说明。'}</div></div><p id="viewer-status" class="small muted" role="status"></p>
+  <div class="download-row">${['spz', 'ply'].filter(format => selected.assets[format]).map(format => `<a href="${h(selected.assets[format])}?download=1" class="btn secondary">${icon('download')} 下载 ${format.toUpperCase()}</a>`).join('')}${selected.source ? `<a class="text-button" href="${h(selected.source)}" target="_blank" rel="noopener noreferrer">在平台查看 ${icon('arrow')}</a>` : ''}</div></section>
+  <aside class="panel sample-details"><span class="eyebrow">${h(selected.kind)}记录</span><h2>${selected.isImported ? '导入案例详情' : '从样例了解预览效果'}</h2><p>${h(selected.description)}</p>${selected.note ? `<div class="sample-case-note"><h3>案例备注</h3><p>${h(selected.note)}</p></div>` : ''}<dl class="summary-list">${selected.facts.map(([label, value]) => `<div><dt>${h(label)}</dt><dd>${h(value)}</dd></div>`).join('')}</dl>${button('new','开始自己的采集','camera','primary full')}</aside></div>`);
   if (modelUrl) loadViewer(modelUrl, selected.upAxis, selected.initialView);
 }
 async function loadViewer(url, upAxis, initialView) {
@@ -264,6 +269,7 @@ async function navigate(view, draftId) {
   if (draftId && view !== 'account') state.draft = await api(`/api/drafts/${draftId}`);
   if (['capture', 'review', 'result'].includes(view) && !state.draft) view = 'home';
   if (view === 'home') state.drafts = (await api('/api/drafts')).drafts;
+  if (view === 'sample') state.config = await api('/api/config');
   state.view = view; renderGeneration++;
   ({ home: renderHome, account: renderAccount, capture: renderCapture, review: renderReview, result: renderResult, sample: renderSample })[view]();
   window.scrollTo(0,0);
@@ -314,6 +320,41 @@ async function action(name, el) {
   if (name === 'account') return navigate('account');
   if (name === 'home') return navigate('home');
   if (name === 'sample') return navigate('sample');
+  if (name === 'edit-sample') {
+    state.config = await api('/api/config');
+    if (state.view !== 'sample') return;
+    const sample = state.config.samples.find(item => item.id === el.dataset.id);
+    if (!sample) throw new Error('找不到此案例，请重新打开案例列表。');
+    const dialog = showDialog(`<span class="eyebrow">重建案例 / 设置</span><h2 id="sample-settings-title">编辑案例信息</h2><p class="muted small">名称、备注和查看方向仅对当前账号生效。</p>
+      <form id="sample-settings-form" data-id="${h(sample.id)}" data-revision="${sample.settingsRevision}">
+        <fieldset class="import-fields"><legend class="sr-only">案例设置</legend>
+        <label for="sample-name">案例名称</label><input id="sample-name" name="title" value="${h(sample.title)}" maxlength="80" required autofocus/>
+        <label for="sample-note">案例备注 <span class="muted">（选填）</span></label><textarea id="sample-note" name="note" rows="3" maxlength="500" placeholder="例如：客厅全景，窗边区域需要重点查看">${h(sample.note)}</textarea>
+        <label for="sample-up-axis">模型向上方向</label><select id="sample-up-axis" name="upAxis"><option value="Z" ${sample.upAxis === 'Z' ? 'selected' : ''}>Z 轴向上（Aholo 常用）</option><option value="Y" ${sample.upAxis === 'Y' ? 'selected' : ''}>Y 轴向上</option></select>
+        <p class="small muted form-hint">模型躺倒时可调整方向；保存后重新打开预览。</p></fieldset>
+        <p id="sample-settings-error" class="error" role="alert" tabindex="-1" hidden></p>
+        <div class="dialog-actions">${button('close-dialog', '取消', '', 'secondary', 'type="button"')}<button class="btn primary" type="submit">保存信息</button></div>
+      </form>`);
+    dialog.classList.add('sample-settings-dialog'); dialog.setAttribute('aria-labelledby', 'sample-settings-title');
+    dialog.addEventListener('cancel', event => { if (dialog.querySelector('[type=submit]').disabled) event.preventDefault(); });
+    return;
+  }
+  if (name === 'import-sample') {
+    if (state.view !== 'sample' || state.sampleImport) return;
+    const owner = state.user.id;
+    $('#dialog')?.close();
+    state.sampleImport = openSampleImport({
+      csrf:state.csrf, maxBytes:state.config.maxModelBytes,
+      onImported:async result => {
+        if (state.user?.id !== owner) return;
+        state.sampleId = result.sample.id; await navigate('sample');
+        toast(result.duplicate ? '这个案例已存在，已为你打开。' : '案例已导入并保存，可随时回来预览。');
+      },
+      onError:handleError, onClose:() => { state.sampleImport = null; },
+      onCancel:() => toast('已取消导入请求，已保存的案例会保留。'),
+    });
+    return;
+  }
   if (name === 'select-sample') {
     if (state.view !== 'sample' || state.sampleId === el.dataset.id || !state.config.samples.some(item => item.id === el.dataset.id)) return;
     state.sampleId = el.dataset.id;
@@ -402,9 +443,25 @@ document.addEventListener('submit', async event => {
       if(state.pending.some(c=>c.owner!==state.user.id)){await api('/api/logout',{method:'POST'});state.user=null;throw new Error('未保存素材属于原账号，请使用原账号重新登录。');}
       state.config=await api('/api/config');
       if(state.pending.length){await navigate('capture',state.pending[0].draftId); if(state.view==='capture') await uploadPending();} else await navigate('home');
+    } else if(form.id==='sample-settings-form') {
+      const dialog = form.closest('dialog'), fields = form.querySelector('fieldset');
+      const closeButtons = dialog.querySelectorAll('[data-action="close-dialog"]');
+      $('#sample-settings-error').hidden = true;
+      fields.disabled = true; closeButtons.forEach(button => { button.disabled = true; }); submit.textContent = '正在保存…';
+      try {
+        const result = await api(`/api/samples/${form.dataset.id}/settings`, { method:'PATCH', data:{ ...data, revision:Number(form.dataset.revision) }, signal:AbortSignal.timeout(10000) });
+        state.sampleId = result.sample.id; dialog.close(); await navigate('sample'); toast('案例信息已保存。');
+      } finally { fields.disabled = false; closeButtons.forEach(button => { button.disabled = false; }); submit.textContent = '保存信息'; }
     } else if(form.id==='new-form') { state.draft=await api('/api/drafts',{method:'POST',data}); $('#dialog').close(); state.target=''; await navigate('capture'); }
     else if(form.id==='issue-form') { state.draft=await api(`/api/drafts/${state.draft.id}/issues`,{method:'PATCH',data:{id:form.dataset.id,status:'noted',note:data.note}}); $('#dialog').close(); renderReview(); }
-  } catch(error) { if(form.id==='login-form' && $('#login-error')) $('#login-error').textContent=error.message; else await handleError(error); }
+  } catch(error) {
+    if(form.id==='login-form' && $('#login-error')) $('#login-error').textContent=error.message;
+    else if(form.id==='sample-settings-form' && error.status !== 401 && $('#sample-settings-error')) {
+      const message = $('#sample-settings-error');
+      message.textContent = error.name === 'TimeoutError' || error.name === 'TypeError' ? '连接中断或等待超时，请重新打开编辑窗口确认保存结果。' : error.message;
+      message.hidden = false; message.focus();
+    } else await handleError(error);
+  }
   finally { if(submit.isConnected) submit.disabled=false; }
 });
 document.addEventListener('change', event => {
@@ -415,7 +472,7 @@ document.addEventListener('change', event => {
   if(el.id==='remote-toggle'){state.camera.remoteEnabled=el.checked;state.camera.guide();}
   if(el.id==='media-filter'){state.mediaFilter=el.value;renderReview();}
 });
-window.addEventListener('beforeunload', event => { if(state.uploading||state.pending.length||state.cameraState.recording){event.preventDefault();event.returnValue='';} });
+window.addEventListener('beforeunload', event => { if(state.uploading||state.pending.length||state.cameraState.recording||state.sampleImport?.busy){event.preventDefault();event.returnValue='';} });
 window.addEventListener('pagehide',()=>{state.camera?.stream?.getTracks().forEach(t=>t.stop());clearIdentity();});
 try { const session=await api('/api/session'); state.user=session.user;state.csrf=session.csrf;state.config=await api('/api/config'); await navigate('home'); }
 catch(error){renderLogin(error.status===401?'':error.message);}
