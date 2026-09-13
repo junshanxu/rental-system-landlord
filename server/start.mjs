@@ -5,7 +5,7 @@ const { server, store } = createApp({
   dataDir: process.env.DATA_DIR || '.data',
   port,
   username: process.env.BOOTSTRAP_USERNAME,
-  password: process.env.BOOTSTRAP_PASSWORD,
+  password: process.env.BOOTSTRAP_PASSWORD || '123456',
 });
 server.listen(port, process.env.HOST || '127.0.0.1', () => {
   console.log(`房东采集台已启动：http://localhost:${port}`);
